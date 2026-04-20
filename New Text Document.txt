@@ -1,0 +1,45 @@
+Backend/
+├── venv/                          # Python virtual environment
+├── .env                           # Environment variables (gitignored)
+├── .env.example                   # Template for env vars
+├── .gitignore
+├── requirements.txt
+├── main.py                        # FastAPI app entry point
+├── config.py                      # Settings / env loading (Pydantic BaseSettings)
+├── routers/
+│   ├── __init__.py
+│   └── chat.py                    # POST /api/chat endpoint
+├── services/
+│   ├── __init__.py
+│   ├── intent_classifier.py       # LLM-based intent classification
+│   ├── agent_registry.py          # Agent metadata & routing map
+│   ├── oracle_agent_service.py    # Oracle Fusion invokeAsync + poll
+│   ├── mock_agent_service.py      # Mock responses for dev/demo
+│   └── response_formatter.py     # Normalize agent output → frontend schema
+├── models/
+│   ├── __init__.py
+│   ├── chat.py                    # Request/Response Pydantic models
+│   └── agent.py                   # Agent metadata models
+└── utils/
+    ├── __init__.py
+    └── oauth.py                   # Oracle OAuth2 token management
+
+
+
+-----------------------------------------
+Backend/
+├── venv/                         ← Python virtual environment
+├── .env                          ← 👈 PUT YOUR CREDENTIALS HERE
+├── .env.example                  ← Template showing what's needed
+├── main.py                       ← FastAPI app entry point
+├── config.py                     ← Pydantic settings (loads .env)
+├── routers/chat.py               ← POST /api/chat endpoint
+├── services/
+│   ├── intent_classifier.py      ← Gemini LLM + regex fallback
+│   ├── agent_registry.py         ← 5 agent definitions
+│   ├── mock_agent_service.py     ← Demo data with charts
+│   ├── oracle_agent_service.py   ← Real Oracle invokeAsync/poll
+│   └── response_formatter.py    ← Formats Oracle output
+├── models/chat.py                ← Request/Response schemas
+├── models/agent.py               ← Agent metadata model
+└── utils/oauth.py                ← OAuth2 token manager
