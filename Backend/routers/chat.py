@@ -11,6 +11,7 @@ from config import get_settings
 from models.chat import ChatRequest, ChatResponse
 from services import intent_classifier
 from services.agent_registry import get_agent_for_intent
+from db import SessionLocal, PromptLog
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -75,4 +76,24 @@ async def chat(request: ChatRequest) -> ChatResponse:
         response = await invoke_oracle_agent(query, intent, confidence, agent_id)
 
     logger.info(f"Response: success={response.success}, agent={response.agent_id}")
+
+    # ── Step 5: Log to database ─────────────────────────────────────────
+    db = SessionLocal()
+    try:
+        log_entry = PromptLog(
+            query=query,
+            endpoint="/api/chat",
+            agent_id=response.agent_id,
+            intent=intent,
+            confidence=str(confidence)
+        )
+        db.add(log_entry)
+        db.commit()
+        logger.info("Prompt logged to database")
+    except Exception as e:
+        logger.error(f"Failed to log to database: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
     return response

@@ -3,8 +3,11 @@ Application configuration — loads from .env file.
 Copy .env.example → .env and fill in your credentials.
 """
 
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
@@ -27,15 +30,23 @@ class Settings(BaseSettings):
     AGENT_TEAM_CODE: str = ""
     AGENT_TEAM_VERSION: int = 1
 
+    # ── Database ───────────────────────────────────────────────────────
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_NAME: str = "oasisdb"
+    DB_USER: str = "oasis_user"
+    DB_PASSWORD: str = "8884"
+
     # ── Server ──────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
+        "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://localhost:3000",
     ]
 
     model_config = {
-        "env_file": ".env",
+        "env_file": str(BASE_DIR / ".env"),
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
     }

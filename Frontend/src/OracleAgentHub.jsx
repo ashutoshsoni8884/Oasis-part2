@@ -186,7 +186,7 @@ const MOCK_RESPONSES = {
 };
 
 // ─── Backend API call ─────────────────────────────────────────────────────────
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = "http://127.0.0.1:8000";
 
 async function callRouterAPI(queryText, sessionId, history = []) {
   try {

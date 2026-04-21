@@ -43,3 +43,87 @@ Backend/
 ├── models/chat.py                ← Request/Response schemas
 ├── models/agent.py               ← Agent metadata model
 └── utils/oauth.py                ← OAuth2 token manager
+
+
+
+-------------------------------full working -------------
+
+The Oracle Agent Hub project is a full-stack application that acts as a multi-agent router platform for Oracle Fusion Cloud AI Agent Studio. It allows users to interact with various AI agents (e.g., for AR Credit, PPM Margin, Finance Close, Procurement, HCM) through a unified chat interface. The system classifies user queries, routes them to the appropriate agent, and returns structured responses with narratives, KPIs, tables, and follow-up suggestions.
+
+Since you're running it in mock mode (default), it uses simulated responses instead of real Oracle APIs. Below is a complete breakdown of how it works, from setup to runtime.
+
+1. Project Structure Overview
+Backend (Python/FastAPI): API server handling requests, intent classification, agent routing, and response formatting.
+Frontend (React/Vite): UI for user interaction, displaying agents, chat bubbles, and responses.
+Shared Config: Environment variables for API keys, modes, and CORS.
+Key files:
+
+Backend: main.py (entry point), config.py (settings), models/ (Pydantic schemas), routers/chat.py (API endpoint), services/ (logic for classification, agents, formatting).
+Frontend: OracleAgentHub.jsx (main component), with agent configs and API calls.
+2. How to Run (Summary from Previous Steps)
+Backend: uvicorn main:app --reload --host 127.0.0.1 --port 8000 (running on http://127.0.0.1:8000).
+Frontend: npm run dev -- --host (running on http://127.0.0.1:5173).
+Access UI at http://127.0.0.1:5173/, enter prompts like "unpaid invoices" or "margin risk".
+3. Runtime Flow: What Happens When You Enter a Prompt
+User Input in Frontend:
+
+You type a query (e.g., "show me unpaid invoices for Siemens") in the React UI.
+The frontend collects the query, generates a session_id (UUID), and includes chat history.
+It calls callRouterAPI(): Sends a POST request to http://127.0.0.1:8000/api/chat with JSON body:
+Backend Receives Request:
+
+FastAPI router (/api/chat) in routers/chat.py handles the POST.
+Validates input using Pydantic models (ChatRequest).
+Logs the query and calls intent_classifier.classify().
+Intent Classification:
+
+services/intent_classifier.py analyzes the query.
+In mock mode: Uses regex patterns (e.g., "invoice|unpaid" → "AR_CREDIT_QUERY").
+If Gemini API is configured (via GEMINI_API_KEY in .env), it uses LLM for better accuracy; otherwise, falls back to regex.
+Returns: Intent (e.g., "AR_CREDIT_QUERY"), Agent ID (e.g., "ar"), Confidence score.
+
+Agent Routing:
+
+services/agent_registry.py maps the intent to an agent (e.g., "AR_CREDIT_QUERY" → AR Credit agent).
+Calls the agent's service:
+In mock mode: mock_agent_service.py returns predefined responses based on intent (e.g., fake invoice data).
+In real mode: oracle_agent_service.py would call Oracle Fusion APIs or AI Agent Studio (requires API keys in .env).
+Response Formatting:
+
+services/response_formatter.py structures the output into a consistent format (narrative, KPIs, tables, charts, follow-ups).
+Example for "unpaid invoices":
+Narrative: "Found 3 unpaid invoices for Siemens totalling $48,200."
+KPIs: Total Outstanding ($48,200), Overdue Amount ($31,000), etc.
+Table: Columns like Invoice No, Amount, Due Date; rows with data.
+Follow-ups: "Show credit limit history", etc.
+
+Backend Returns Response:
+
+JSON response (via ChatResponse model):
+If classification fails (e.g., unknown query), returns success: false with a fallback message.
+Frontend Displays Response:
+
+Receives JSON, maps to camelCase (e.g., agent_id → agentId).
+Renders: Agent badge, narrative text, KPI cards, table, follow-up buttons.
+Handles errors (e.g., "Failed to fetch") with user-friendly messages.
+Chat history updates for context in future queries.
+
+4. Key Components Explained
+Agents: Defined in frontend (AGENTS array) and backend (agent_registry.py). Each has intents, endpoints, and mock/real logic.
+Mock Mode: Uses hardcoded responses in OracleAgentHub.jsx (MOCK_RESPONSES) for testing without APIs. Backend overrides this with its own logic.
+Real Mode: Requires .env with GEMINI_API_KEY, FUSION_HOST, etc. Calls external APIs for live data.
+CORS: Configured in config.py to allow frontend origins (e.g., http://127.0.0.1:5173).
+Health Check: /api/health shows status (mock mode, API configs).
+Error Handling: Backend logs issues; frontend shows "Could not reach backend" on network failures.
+5. Testing and Debugging
+Prompts to Try:
+AR: "unpaid invoices", "aging report".
+PPM: "margin risk", "revenue forecast".
+Finance: "month-end close".
+Procurement: "open purchase orders".
+HCM: "pending leave requests".
+Debug Tips:
+Check backend logs for classification details.
+Use browser dev tools: Network tab for /api/chat request/response.
+If "Failed to fetch", ensure both servers are running and CORS allows the origin.
+This setup simulates an enterprise AI router, routing queries to specialized agents for structured insights. In production, configure real APIs for live Oracle data. If you have questions about specific parts (e.g., adding a new agent), let me know!

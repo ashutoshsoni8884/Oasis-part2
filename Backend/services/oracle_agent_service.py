@@ -49,6 +49,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
             "Authorization": basic_header,
             "Content-Type": "application/json",
         }
+        logger.info(f"Using Basic Auth header (user: {settings.FUSION_USER})")
 
     invoke_payload = {
         "conversational": "true",
@@ -77,6 +78,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
 
         if invoke_response.status_code != 200:
             logger.error(f"Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
+            logger.error(f"Response headers: {invoke_response.headers}")
             return ChatResponse(
                 success=False,
                 fallback=True,
