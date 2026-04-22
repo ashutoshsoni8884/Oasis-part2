@@ -188,6 +188,126 @@ const MOCK_RESPONSES = {
 // ─── Backend API call ─────────────────────────────────────────────────────────
 const BACKEND_URL = "http://127.0.0.1:8000";
 
+// ── New Async API Flow ──────────────────────────────────────────────────────────
+// POST /api/chat returns {job_id, status: "QUEUED"}
+// GET /api/chat/{job_id} returns {job_id, status, result} when complete
+
+async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
+  // Step 1: Submit the query and get a job_id.
+  // Returns {job_id, status} or throws error.
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: queryText,
+        session_id: sessionId,
+        history: history.slice(-6).map(m => ({
+          role: m.role,
+          text: m.text || m.narrative || "",
+        })),
+        bearer_token: bearerToken,  // Required for real Oracle auth
+      }),
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      throw new Error(error.detail || `Backend error: HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    return {
+      job_id: data.job_id,
+      status: data.status,  // "QUEUED"
+      message: data.message,
+    };
+  } catch (err) {
+    console.error("Failed to submit query:", err);
+    throw err;
+  }
+}
+
+async function pollChatJob(jobId, maxWaitMs = 300000) {
+  // Step 2: Poll for job completion.
+  // Returns result when status == "COMPLETE", throws error on timeout or ERROR status.
+  const startTime = Date.now();
+  const pollInterval = 1000;  // Poll every 1 second
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/chat/${jobId}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Poll failed: HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      console.log(`[${jobId}] Poll status: ${data.status}`);
+
+      if (data.status === "COMPLETE" && data.result) {
+        // Map snake_case to camelCase
+        const result = data.result;
+        return {
+          success: result.success,
+          fallback: result.fallback || false,
+          message: result.message,
+          intent: result.intent,
+          confidence: result.confidence,
+          agentId: result.agent_id,
+          agentName: result.agent_name,
+          narrative: result.narrative,
+          html: result.html,
+          kpis: result.kpis,
+          columns: result.columns,
+          rows: result.rows,
+          charts: result.charts,
+          followUps: result.follow_ups,
+        };
+      }
+
+      if (data.status === "ERROR") {
+        throw new Error(`Job failed: ${data.error || "Unknown error"}`);
+      }
+
+      // Still processing, wait and retry
+      await new Promise(r => setTimeout(r, pollInterval));
+
+    } catch (err) {
+      if (err.message.startsWith("Job failed")) throw err;
+      console.warn(`Poll attempt failed: ${err.message}`);
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+  }
+
+  throw new Error(`Job polling timed out after ${maxWaitMs / 1000} seconds`);
+}
+
+async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "") {
+  // Complete async flow: submit job, then poll until complete.
+  try {
+    // Step 1: Submit job
+    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken);
+    console.log(`Job submitted: ${submitResp.job_id}`);
+
+    // Step 2: Poll for result
+    const result = await pollChatJob(submitResp.job_id);
+    return result;
+
+  } catch (err) {
+    console.error("Backend call failed:", err);
+    return {
+      success: false,
+      fallback: true,
+      message: `Backend error: ${err.message}. Make sure the backend is running at ${BACKEND_URL} and you provided a valid bearer token.`,
+    };
+  }
+}
+
+// ── Commented out: Old sync API ────────────────────────────────────────────────
+/*
 async function callRouterAPI(queryText, sessionId, history = []) {
   try {
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
@@ -219,6 +339,7 @@ async function callRouterAPI(queryText, sessionId, history = []) {
       agentId: data.agent_id,
       agentName: data.agent_name,
       narrative: data.narrative,
+      html: data.html,
       kpis: data.kpis,
       columns: data.columns,
       rows: data.rows,
@@ -234,6 +355,7 @@ async function callRouterAPI(queryText, sessionId, history = []) {
     };
   }
 }
+*/
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
 function statusMeta(val) {
@@ -568,7 +690,11 @@ function MessageBubble({ msg, agents, onFollowUp }) {
               <ConfidenceMeter value={msg.confidence} />
             </div>
           )}
-          {msg.narrative && <NarrativeText text={msg.narrative} />}
+          {msg.html ? (
+            <div style={{ fontSize: '13px', color: T.slate, lineHeight: 1.65, marginBottom: '12px' }} dangerouslySetInnerHTML={{ __html: msg.html }} />
+          ) : msg.narrative ? (
+            <NarrativeText text={msg.narrative} />
+          ) : null}
           {msg.kpis && <KPIGrid kpis={msg.kpis} />}
           {msg.columns && msg.rows && <DataTable columns={msg.columns} rows={msg.rows} />}
           {msg.charts && msg.charts.length > 0 && (
@@ -789,6 +915,7 @@ export default function OracleAgentHub() {
   const [activeAgentId, setActiveAgentId] = useState(null);
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
+  const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");  // NEW: Bearer token from user
   const chatRef = useRef(null);
 
   const user = { name: "Rajesh Kumar", initials: "RK", id: "rk@splcg.com" };
@@ -813,6 +940,15 @@ export default function OracleAgentHub() {
 
   async function handleQuery(queryText) {
     if (loading) return;
+    
+    // NEW: Require bearer token before submitting
+    if (!bearerToken.trim()) {
+      setMessages(prev => [...prev, {
+        id: uuid(), role: "system", fallback: true, time: new Date(),
+        text: "⚠️  Bearer token required. Please enter your Oracle Fusion authentication token in the input field above.",
+      }]);
+      return;
+    }
 
     const userMsg = { id: uuid(), role: "user", text: queryText, time: new Date(), userName: user.name };
     setMessages(prev => [...prev, userMsg]);
@@ -824,7 +960,8 @@ export default function OracleAgentHub() {
     await new Promise(r => setTimeout(r, 400));
     setRouterStage(2);
 
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6));
+    // NEW: Pass bearerToken to callRouterAPI
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
@@ -871,6 +1008,41 @@ export default function OracleAgentHub() {
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: T.bg, minHeight: "500px" }}>
         <Header user={user} />
         <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
+        
+        {/* NEW: Bearer Token Input Section */}
+        <div style={{ background: T.white, borderBottom: `1px solid ${T.border}`, padding: "12px 20px", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: "11px", fontWeight: 600, color: T.muted, textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
+                🔐 Oracle Bearer Token (Required)
+              </label>
+              <input
+                type="password"
+                placeholder="Paste your Oracle Fusion bearer token here..."
+                value={bearerToken}
+                onChange={(e) => {
+                  setBearerToken(e.target.value);
+                  localStorage.setItem("bearerToken", e.target.value);  // Persist to localStorage
+                }}
+                disabled={loading}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  border: `1px solid ${bearerToken ? T.success : T.warning}`,
+                  borderRadius: T.radius,
+                  fontFamily: "monospace",
+                  background: bearerToken ? "#F0FDF4" : "#FFFBEB",
+                  color: T.navy,
+                  transition: "all 0.2s",
+                }}
+              />
+              <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
+                {bearerToken ? "✓ Token loaded" : "⚠️  Paste your token to submit queries"}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           <AgentPanel agents={AGENTS} activeAgentId={activeAgentId} stats={sessionStats} />

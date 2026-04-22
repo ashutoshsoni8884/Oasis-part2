@@ -3,6 +3,7 @@ Request / Response schemas for the chat endpoint.
 """
 
 from pydantic import BaseModel
+from datetime import datetime
 
 
 # ─── Request ────────────────────────────────────────────────────────────────────
@@ -11,6 +12,8 @@ class ChatRequest(BaseModel):
     query: str
     session_id: str | None = None
     history: list[dict] | None = None
+    bearer_token: str | None = None
+    job_id: str | None = None
 
 
 # ─── Response sub-models ────────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ class ChatResponse(BaseModel):
     agent_id: str | None = None
     agent_name: str | None = None
     narrative: str | None = None
+    html: str | None = None
     kpis: list[KPI] | None = None
     columns: list[str] | None = None
     rows: list[list[str]] | None = None
@@ -49,3 +53,28 @@ class ChatResponse(BaseModel):
     follow_ups: list[str] | None = None
     fallback: bool = False
     message: str | None = None
+
+
+# ─── Async Job Responses ────────────────────────────────────────────────────────
+
+class JobResponse(BaseModel):
+    """Response from POST /api/chat — returns job_id for polling"""
+    job_id: str
+    status: str  # "QUEUED"
+    message: str | None = None
+
+
+class JobStatusResponse(BaseModel):
+    """Response from GET /api/chat/{job_id} during polling"""
+    job_id: str
+    status: str  # "QUEUED" | "RUNNING" | "COMPLETE" | "ERROR"
+    message: str | None = None
+    result: ChatResponse | None = None  # Only present when status == "COMPLETE"
+    error: str | None = None  # Only present when status == "ERROR"
+
+
+class JobResultResponse(BaseModel):
+    """Final result response when job is COMPLETE"""
+    job_id: str
+    status: str  # "COMPLETE"
+    result: ChatResponse

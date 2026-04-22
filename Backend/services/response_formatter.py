@@ -4,8 +4,8 @@ the structured ChatResponse schema the frontend expects.
 """
 
 import logging
-from models.chat import ChatResponse, KPI, ChartData, ChartDataset
-from services.agent_registry import get_agent
+from Backend.models.chat import ChatResponse, KPI, ChartData, ChartDataset
+from Backend.services.agent_registry import get_agent
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,17 @@ def format_oracle_response(
             message="Oracle agent returned an empty response.",
         )
 
-    # The Oracle agent response is primarily narrative text
-    narrative = oracle_output.strip()
+    # Check if the response is HTML
+    oracle_output_stripped = oracle_output.strip()
+    if oracle_output_stripped.startswith('<') and ('<' in oracle_output_stripped or '>' in oracle_output_stripped):
+        # Likely HTML response
+        html = oracle_output_stripped
+        narrative = None
+        logger.info('Oracle agent returned HTML response')
+    else:
+        # Plain text response
+        narrative = oracle_output_stripped
+        html = None
 
     # Generate contextual follow-ups based on intent
     follow_ups = _generate_follow_ups(intent, agent_id)
@@ -46,6 +55,7 @@ def format_oracle_response(
         agent_id=agent_id,
         agent_name=agent.name if agent else agent_id,
         narrative=narrative,
+        html=html,
         kpis=None,       # KPIs would need structured Oracle output or post-processing
         columns=None,
         rows=None,

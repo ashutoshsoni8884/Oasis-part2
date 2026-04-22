@@ -12,7 +12,10 @@ BASE_DIR = Path(__file__).resolve().parent
 
 class Settings(BaseSettings):
     # ── Mode ────────────────────────────────────────────────────────────
-    MOCK_MODE: bool = True
+    # MOCK_MODE: bool = True  # Commented out - using real Oracle Fusion only
+    
+    # Keeping MOCK_MODE for backwards compatibility but defaulting to False
+    MOCK_MODE: bool = False
 
     # ── Google Gemini ───────────────────────────────────────────────────
     GEMINI_API_KEY: str = ""

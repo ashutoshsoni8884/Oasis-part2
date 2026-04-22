@@ -7,7 +7,7 @@ import time
 import base64
 import logging
 import httpx
-from config import get_settings
+from Backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 

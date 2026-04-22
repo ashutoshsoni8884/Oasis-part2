@@ -8,8 +8,8 @@ Falls back to regex pattern matching if the LLM is unavailable.
 import json
 import re
 import logging
-from config import get_settings
-from services.agent_registry import get_all_agents, get_agent_for_intent
+from Backend.config import get_settings
+from Backend.services.agent_registry import get_all_agents, get_agent_for_intent
 
 logger = logging.getLogger(__name__)
 
@@ -96,14 +96,38 @@ async def classify_with_llm(query: str, history: list[dict] | None = None) -> di
             raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
             raw_text = re.sub(r"\s*```$", "", raw_text)
 
-        result = json.loads(raw_text)
+        # ── Robust JSON parsing ─────────────────────────────────────────
+        try:
+            result = json.loads(raw_text)
+        except json.JSONDecodeError as json_err:
+            logger.error(f"Failed to parse Gemini JSON response: {json_err}")
+            logger.debug(f"Raw response was: {raw_text}")
+            logger.warning("Falling back to regex due to malformed Gemini response")
+            return classify_with_regex(query)
 
-        # Validate the response
-        intent = result.get("intent", "UNKNOWN")
+        # ── Validate the response structure ─────────────────────────────
+        if not isinstance(result, dict):
+            logger.error(f"Gemini response is not a dict: {type(result)}")
+            return classify_with_regex(query)
+
+        # Validate required fields
+        intent = result.get("intent")
         agent_id = result.get("agent_id")
-        confidence = float(result.get("confidence", 0.0))
+        confidence = result.get("confidence", 0.0)
+        
+        if intent is None:
+            logger.error("Gemini response missing 'intent' field")
+            return classify_with_regex(query)
+        
+        # Convert confidence to float safely
+        try:
+            confidence = float(confidence)
+            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+        except (ValueError, TypeError):
+            logger.error(f"Invalid confidence value: {confidence}")
+            confidence = 0.0
 
-        # Verify agent exists
+        # Verify agent exists if not UNKNOWN
         if intent != "UNKNOWN" and agent_id:
             agent = get_agent_for_intent(intent)
             if agent is None:
@@ -113,12 +137,16 @@ async def classify_with_llm(query: str, history: list[dict] | None = None) -> di
         return {
             "intent": intent,
             "agent_id": agent_id,
-            "confidence": min(confidence, 1.0),
+            "confidence": confidence,
             "reasoning": result.get("reasoning", ""),
         }
 
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error in Gemini response: {e}")
+        return classify_with_regex(query)
     except Exception as e:
-        logger.error(f"Gemini classification failed: {e}")
+        logger.error(f"Gemini classification failed: {type(e).__name__}: {e}")
+        logger.info("Falling back to regex pattern matching")
         return classify_with_regex(query)
 
 

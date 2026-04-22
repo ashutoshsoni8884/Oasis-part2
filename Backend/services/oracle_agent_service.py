@@ -8,59 +8,92 @@ Implements the async invoke-then-poll pattern:
 import asyncio
 import logging
 import httpx
-from config import get_settings
-from utils.oauth import get_oracle_token, get_basic_auth_header
-from services.response_formatter import format_oracle_response
-from models.chat import ChatResponse
+from Backend.config import get_settings
+from Backend.utils.oauth import get_oracle_token, get_basic_auth_header
+from Backend.services.response_formatter import format_oracle_response
+from Backend.models.chat import ChatResponse
+from Backend.utils import job_manager
 
 logger = logging.getLogger(__name__)
 
-MAX_POLL_ATTEMPTS = 30
-POLL_INTERVAL_SECONDS = 2
+MAX_POLL_ATTEMPTS = 300  # 300 * 1 second = 5 minutes
+POLL_INTERVAL_SECONDS = 1
+REQUEST_TIMEOUT = 60.0
+
+# Mapping of api_job_id -> {oracle_job_id, headers, intent, confidence, agent_id}
+_job_state = {}
 
 
-async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str) -> ChatResponse:
+async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
+    For the new async flow:
+    1. Quickly invokes the Oracle agent (returns oracle_job_id)
+    2. Starts a background polling task
+    3. Returns immediately
+    
+    Args:
+        query: User query
+        intent: Classified intent
+        confidence: Classification confidence
+        agent_id: Target agent ID
+        bearer_token: Authentication token (required)
+        job_id: API job_id (from job_manager)
     """
     settings = get_settings()
-    # Try to get OAuth token, fallback to Basic Auth if not configured/fails
-    token = await get_oracle_token()
     
-    # Clean up host (remove https:// if present)
-    host = settings.FUSION_HOST.replace("https://", "").replace("http://", "").rstrip("/")
-    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{settings.AGENT_TEAM_CODE}"
-
-    if token:
+    # Construct base URL from settings
+    base_url = f"https://{settings.FUSION_HOST}/api/agents/v2"
+    
+    # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
+    if bearer_token:
         headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
         }
+        logger.info(f"[{job_id}] Using provided bearer token for authentication")
     else:
-        # Fallback to Basic Auth with user/pass
-        basic_header = get_basic_auth_header()
-        if not basic_header:
-            return ChatResponse(
-                success=False,
-                fallback=True,
-                message="Authentication not configured. Please provide either OAuth credentials or Fusion User ID/Password in the .env file.",
-            )
-        headers = {
-            "Authorization": basic_header,
-            "Content-Type": "application/json",
-        }
-        logger.info(f"Using Basic Auth header (user: {settings.FUSION_USER})")
+        token = await get_oracle_token()
+        
+        if token:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            logger.info(f"[{job_id}] Using OAuth token for authentication")
+        else:
+            # Fallback to Basic Auth with user/pass
+            basic_header = get_basic_auth_header()
+            if not basic_header:
+                job_manager.update_job(
+                    job_id,
+                    status="ERROR",
+                    error="Authentication not configured. Please provide either OAuth credentials, a bearer token, or Fusion User ID/Password in the .env file."
+                )
+                return ChatResponse(
+                    success=False,
+                    fallback=True,
+                    message="Authentication not configured.",
+                )
+            headers = {
+                "Authorization": basic_header,
+                "Content-Type": "application/json",
+            }
+            logger.info(f"[{job_id}] Using Basic Auth header (user: {settings.FUSION_USER})")
 
     invoke_payload = {
-        "conversational": "true",
+        "message": query,
+        "conversational": True,
+        "invocationMode": "END_USER",
         "version": settings.AGENT_TEAM_VERSION,
         "status": "PUBLISHED",
-        "message": query,
+        "parameters": {},
+        "conversationId": None,
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         # ── Step 1: Invoke ──────────────────────────────────────────────
-        logger.info(f"Invoking Oracle agent: {settings.AGENT_TEAM_CODE} with query: {query[:80]}...")
+        logger.info(f"[{job_id}] Invoking Oracle agent: {settings.AGENT_TEAM_CODE} with query: {query[:80]}...")
 
         try:
             invoke_response = await client.post(
@@ -69,7 +102,12 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 headers=headers,
             )
         except httpx.RequestError as e:
-            logger.error(f"Failed to invoke Oracle agent: {e}")
+            logger.error(f"[{job_id}] Failed to invoke Oracle agent: {e}")
+            job_manager.update_job(
+                job_id,
+                status="ERROR",
+                error=f"Could not reach Oracle Fusion: {str(e)}"
+            )
             return ChatResponse(
                 success=False,
                 fallback=True,
@@ -77,79 +115,179 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
             )
 
         if invoke_response.status_code != 200:
-            logger.error(f"Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
-            logger.error(f"Response headers: {invoke_response.headers}")
+            logger.error(f"[{job_id}] Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
+            logger.error(f"[{job_id}] Response headers: {invoke_response.headers}")
+            job_manager.update_job(
+                job_id,
+                status="ERROR",
+                error=f"Oracle agent invocation failed (HTTP {invoke_response.status_code})"
+            )
             return ChatResponse(
                 success=False,
                 fallback=True,
-                message=f"Oracle agent invocation failed (HTTP {invoke_response.status_code}). Please check your credentials and agent configuration.",
+                message=f"Oracle agent invocation failed (HTTP {invoke_response.status_code}).",
             )
 
-        invoke_data = invoke_response.json()
-        job_id = invoke_data.get("jobId")
+        try:
+            invoke_data = invoke_response.json()
+        except Exception as e:
+            logger.error(f"[{job_id}] Failed to parse invoke response: {e}")
+            job_manager.update_job(
+                job_id,
+                status="ERROR",
+                error=f"Failed to parse Oracle response: {str(e)}"
+            )
+            return ChatResponse(
+                success=False,
+                fallback=True,
+                message="Failed to parse Oracle response.",
+            )
+
+        oracle_job_id = invoke_data.get("jobId")
         conversation_id = invoke_data.get("conversationId")
 
-        if not job_id:
-            logger.error(f"No jobId in invoke response: {invoke_data}")
+        if not oracle_job_id:
+            logger.error(f"[{job_id}] No jobId in invoke response: {invoke_data}")
+            job_manager.update_job(
+                job_id,
+                status="ERROR",
+                error="Oracle agent did not return a job ID"
+            )
             return ChatResponse(
                 success=False,
                 fallback=True,
                 message="Oracle agent did not return a job ID.",
             )
 
-        logger.info(f"Oracle job started: {job_id} (conversation: {conversation_id})")
+        logger.info(f"[{job_id}] Oracle job started: {oracle_job_id} (conversation: {conversation_id})")
 
-        # ── Step 2: Poll for result ─────────────────────────────────────
+        # ── Step 2: Store job state and start background polling ───────
+        _job_state[job_id] = {
+            "oracle_job_id": oracle_job_id,
+            "headers": headers,
+            "base_url": base_url,
+            "intent": intent,
+            "confidence": confidence,
+            "agent_id": agent_id,
+        }
+        
+        # Update job status to RUNNING
+        job_manager.update_job(job_id, status="RUNNING")
+        
+        # Start background polling task
+        asyncio.create_task(
+            _poll_oracle_async(
+                api_job_id=job_id,
+                oracle_job_id=oracle_job_id,
+                base_url=base_url,
+                headers=headers,
+                intent=intent,
+                confidence=confidence,
+                agent_id=agent_id,
+            )
+        )
+        
+        logger.info(f"[{job_id}] Background polling started for Oracle job {oracle_job_id}")
+        
+        return ChatResponse(
+            success=True,
+            message=f"Job queued. Oracle job ID: {oracle_job_id}",
+        )
+
+
+async def _poll_oracle_async(
+    api_job_id: str,
+    oracle_job_id: str,
+    base_url: str,
+    headers: dict,
+    intent: str,
+    confidence: float,
+    agent_id: str,
+) -> None:
+    """
+    Background task: Poll Oracle Fusion for job completion.
+    Updates job_manager with status and results.
+    
+    Args:
+        api_job_id: The job_id returned to the client
+        oracle_job_id: The Oracle Fusion job ID
+        base_url: Oracle API base URL
+        headers: Request headers with auth
+        intent: Classified intent
+        confidence: Classification confidence
+        agent_id: Agent ID
+    """
+    logger.info(f"[{api_job_id}] Starting background polling for Oracle job {oracle_job_id}")
+    
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         for attempt in range(MAX_POLL_ATTEMPTS):
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
             try:
                 status_response = await client.get(
-                    f"{base_url}/status/{job_id}",
+                    f"{base_url}/status/{oracle_job_id}",
                     headers=headers,
                 )
             except httpx.RequestError as e:
-                logger.warning(f"Poll attempt {attempt + 1} failed: {e}")
+                logger.warning(f"[{api_job_id}] Poll attempt {attempt + 1} failed: {e}")
                 continue
 
             if status_response.status_code != 200:
-                logger.warning(f"Poll returned {status_response.status_code}")
+                logger.warning(f"[{api_job_id}] Poll returned {status_response.status_code}")
                 continue
 
-            status_data = status_response.json()
+            try:
+                status_data = status_response.json()
+            except Exception as e:
+                logger.warning(f"[{api_job_id}] Failed to parse poll response: {e}")
+                continue
+                
             status = status_data.get("status", "").upper()
 
-            logger.info(f"Poll {attempt + 1}/{MAX_POLL_ATTEMPTS}: status={status}")
+            logger.info(f"[{api_job_id}] Poll {attempt + 1}/{MAX_POLL_ATTEMPTS}: status={status}")
 
             if status == "COMPLETE":
                 # Parse and format the Oracle response
                 oracle_output = status_data.get("output", "")
-                return format_oracle_response(
+                result = format_oracle_response(
                     oracle_output=oracle_output,
                     intent=intent,
                     confidence=confidence,
                     agent_id=agent_id,
                 )
+                
+                # Update job_manager with result
+                job_manager.update_job(
+                    api_job_id,
+                    status="COMPLETE",
+                    result=result.dict() if hasattr(result, 'dict') else result,
+                )
+                
+                logger.info(f"[{api_job_id}] Oracle job {oracle_job_id} completed successfully")
+                return
 
             elif status == "ERROR":
                 error_msg = status_data.get("error", "Unknown error from Oracle agent")
-                logger.error(f"Oracle agent error: {error_msg}")
-                return ChatResponse(
-                    success=False,
-                    fallback=True,
-                    message=f"Oracle agent returned an error: {error_msg}",
+                logger.error(f"[{api_job_id}] Oracle agent error: {error_msg}")
+                
+                # Update job_manager with error
+                job_manager.update_job(
+                    api_job_id,
+                    status="ERROR",
+                    error=error_msg,
                 )
+                return
 
             elif status in ("RUNNING", "WAITING"):
                 continue
             else:
-                logger.warning(f"Unknown status: {status}")
+                logger.warning(f"[{api_job_id}] Unknown status: {status}")
                 continue
 
         # Timeout
-        logger.error(f"Oracle agent timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS}s")
-        return ChatResponse(
-            success=False,
-            fallback=True,
-            message="Oracle agent took too long to respond. Please try again.",
+        logger.error(f"[{api_job_id}] Oracle agent timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS}s")
+        job_manager.update_job(
+            api_job_id,
+            status="ERROR",
+            error=f"Oracle agent timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS} seconds"
         )
