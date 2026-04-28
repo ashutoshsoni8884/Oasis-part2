@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from Backend.config import get_settings
+from Backend.routers.auth import router as auth_router
 from Backend.routers.chat import router as chat_router
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ app.add_middleware(
 )
 
 # ── Routers ─────────────────────────────────────────────────────────────────────
+app.include_router(auth_router)
 app.include_router(chat_router)
 
 

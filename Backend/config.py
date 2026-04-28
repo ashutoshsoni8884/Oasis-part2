@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     OAUTH_CLIENT_SECRET: str = ""
     OAUTH_SCOPE: str = ""
 
+    # ── JSON Web Token (JWT) Auth ─────────────────────────────────────────
+    JWT_SECRET_KEY: str = "change-me-to-a-secure-random-string"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080
+    PASSWORD_SALT: str = "oasis-default-salt"
+
     # ── Oracle AI Agent Studio ──────────────────────────────────────────
     AGENT_TEAM_CODE: str = ""
     AGENT_TEAM_VERSION: int = 1

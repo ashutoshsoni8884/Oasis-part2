@@ -31,6 +31,10 @@ class PromptLog(Base):
     confidence = Column(String, nullable=True)  # Store as string for simplicity
 
 
+# Import models so SQLAlchemy can create tables for all registered models.
+import Backend.models.user  # noqa: F401
+import Backend.models.authorization  # noqa: F401
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 

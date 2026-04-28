@@ -4,21 +4,23 @@ Async pattern: POST returns job_id immediately, GET polls for result
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from Backend.config import get_settings
 from Backend.models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
+from Backend.models.user import User
 from Backend.services import intent_classifier
 from Backend.services.agent_registry import get_agent_for_intent
 from Backend.db import SessionLocal, PromptLog
 from Backend.utils import job_manager
+from Backend.utils.security import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
 @router.post("/chat", response_model=JobResponse)
-async def chat_submit(request: ChatRequest) -> JobResponse:
+async def chat_submit(request: ChatRequest, current_user: User = Depends(get_current_user)) -> JobResponse:
     """
     Submit a chat query for async processing.
     Returns job_id immediately. Use GET /api/chat/{job_id} to poll for results.
@@ -26,7 +28,7 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
     Requires:
     - query: The user query
     - bearer_token: Authentication token for Oracle Fusion
-    
+
     Optional:
     - session_id: Session identifier
     - history: Conversation history
@@ -86,6 +88,7 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
     api_job_id = job_manager.create_job(
         query=query,
         bearer_token=request.bearer_token,
+        owner_id=current_user.id,
     )
     
     # Store classification and agent info for later use
@@ -109,7 +112,7 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
             endpoint="/api/chat",
             agent_id=agent_id,
             intent=intent,
-            confidence=str(confidence)
+            confidence=str(confidence),
         )
         db.add(log_entry)
         db.commit()
@@ -146,7 +149,7 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
 
 
 @router.get("/chat/{job_id}", response_model=JobStatusResponse)
-async def chat_poll(job_id: str) -> JobStatusResponse:
+async def chat_poll(job_id: str, current_user: User = Depends(get_current_user)) -> JobStatusResponse:
     """
     Poll for the result of an async chat job.
     
@@ -155,7 +158,7 @@ async def chat_poll(job_id: str) -> JobStatusResponse:
     - result: ChatResponse (only when status == "COMPLETE")
     - error: Error message (only when status == "ERROR")
     """
-    job_status = job_manager.get_job_status(job_id)
+    job_status = job_manager.get_job_status(job_id, owner_id=current_user.id)
     
     if not job_status:
         raise HTTPException(
@@ -175,7 +178,7 @@ async def chat_poll(job_id: str) -> JobStatusResponse:
     
     # If job is complete, return result
     if status == "COMPLETE":
-        result = job_manager.get_result(job_id)
+        result = job_manager.get_result(job_id, owner_id=current_user.id)
         if result:
             return JobStatusResponse(
                 job_id=job_id,
@@ -185,7 +188,7 @@ async def chat_poll(job_id: str) -> JobStatusResponse:
     
     # If job has error, return error
     if status == "ERROR":
-        error = job_manager.get_error(job_id)
+        error = job_manager.get_error(job_id, owner_id=current_user.id)
         return JobStatusResponse(
             job_id=job_id,
             status="ERROR",

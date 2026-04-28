@@ -20,13 +20,14 @@ JOB_EXPIRATION_SECONDS = 3600  # 1 hour
 MAX_JOB_AGE_SECONDS = 7200  # 2 hours
 
 
-def create_job(query: str, bearer_token: Optional[str] = None) -> str:
+def create_job(query: str, bearer_token: Optional[str] = None, owner_id: Optional[int] = None) -> str:
     """
     Create a new job and return its job_id.
     
     Args:
         query: The user query
         bearer_token: Optional bearer token for authentication
+        owner_id: User ID that created the job
         
     Returns:
         job_id (uuid string)
@@ -38,6 +39,7 @@ def create_job(query: str, bearer_token: Optional[str] = None) -> str:
         "status": "QUEUED",
         "query": query,
         "bearer_token": bearer_token,
+        "owner_id": owner_id,
         "result": None,
         "error": None,
         "created_at": now,
@@ -48,17 +50,22 @@ def create_job(query: str, bearer_token: Optional[str] = None) -> str:
     return job_id
 
 
-def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
+def get_job_status(job_id: str, owner_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
     Get the current status of a job.
     
     Args:
         job_id: The job ID
+        owner_id: Optional owner ID used to validate access
         
     Returns:
         Job dict with status, or None if not found
     """
     if job_id not in _jobs:
+        return None
+
+    job = _jobs[job_id]
+    if owner_id is not None and job.get("owner_id") != owner_id:
         return None
     
     job = _jobs[job_id]
@@ -105,12 +112,13 @@ def update_job(job_id: str, status: str, result: Optional[Dict] = None, error: O
     return True
 
 
-def get_result(job_id: str) -> Optional[Dict[str, Any]]:
+def get_result(job_id: str, owner_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
     Get the result of a completed job.
     
     Args:
         job_id: The job ID
+        owner_id: Optional owner ID used to validate access
         
     Returns:
         Result dict if job is COMPLETE, or None
@@ -119,6 +127,8 @@ def get_result(job_id: str) -> Optional[Dict[str, Any]]:
         return None
     
     job = _jobs[job_id]
+    if owner_id is not None and job.get("owner_id") != owner_id:
+        return None
     
     if job["status"] == "COMPLETE":
         return job.get("result")
@@ -126,12 +136,13 @@ def get_result(job_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_error(job_id: str) -> Optional[str]:
+def get_error(job_id: str, owner_id: Optional[int] = None) -> Optional[str]:
     """
     Get the error of a failed job.
     
     Args:
         job_id: The job ID
+        owner_id: Optional owner ID used to validate access
         
     Returns:
         Error message if job has ERROR status, or None
@@ -140,6 +151,8 @@ def get_error(job_id: str) -> Optional[str]:
         return None
     
     job = _jobs[job_id]
+    if owner_id is not None and job.get("owner_id") != owner_id:
+        return None
     
     if job["status"] == "ERROR":
         return job.get("error")

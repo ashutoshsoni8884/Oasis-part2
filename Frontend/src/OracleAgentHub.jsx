@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useAuth } from "./auth/AuthContext";
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -220,13 +221,18 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 // POST /api/chat returns {job_id, status: "QUEUED"}
 // GET /api/chat/{job_id} returns {job_id, status, result} when complete
 
-async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
+async function submitChatJob(queryText, sessionId, history = [], bearerToken = "", jwtToken = "") {
   // Step 1: Submit the query and get a job_id.
   // Returns {job_id, status} or throws error.
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (jwtToken) {
+      headers["Authorization"] = `Bearer ${jwtToken}`;
+    }
+
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         query: queryText,
         session_id: sessionId,
@@ -255,7 +261,7 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
   }
 }
 
-async function pollChatJob(jobId, maxWaitMs = 300000) {
+async function pollChatJob(jobId, jwtToken = "", maxWaitMs = 300000) {
   // Step 2: Poll for job completion.
   // Returns result when status == "COMPLETE", throws error on timeout or ERROR status.
   const startTime = Date.now();
@@ -263,9 +269,14 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
 
   while (Date.now() - startTime < maxWaitMs) {
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (jwtToken) {
+        headers["Authorization"] = `Bearer ${jwtToken}`;
+      }
+
       const res = await fetch(`${BACKEND_URL}/api/chat/${jobId}`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
 
       if (!res.ok) {
@@ -313,15 +324,15 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
   throw new Error(`Job polling timed out after ${maxWaitMs / 1000} seconds`);
 }
 
-async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "") {
+async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "", jwtToken = "") {
   // Complete async flow: submit job, then poll until complete.
   try {
     // Step 1: Submit job
-    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken);
+    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken, jwtToken);
     console.log(`Job submitted: ${submitResp.job_id}`);
 
     // Step 2: Poll for result
-    const result = await pollChatJob(submitResp.job_id);
+    const result = await pollChatJob(submitResp.job_id, jwtToken);
     return result;
 
   } catch (err) {
@@ -857,7 +868,7 @@ function QueryInputBar({ onSubmit, disabled, suggestions }) {
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ user, onSettings }) {
+function Header({ user, onSignOut }) {
   return (
     <div style={{ height: "54px", background: T.navy, display: "flex", alignItems: "center", padding: "0 20px", gap: "12px", flexShrink: 0, borderBottom: `3px solid ${T.oracle}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
@@ -881,6 +892,12 @@ function Header({ user, onSettings }) {
           </div>
           <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.75)", fontWeight: 500 }}>{user.name}</span>
         </div>
+        <button
+          onClick={onSignOut}
+          style={{ padding: "8px 12px", borderRadius: "999px", border: "1px solid rgba(255,255,255,0.22)", background: "rgba(255,255,255,0.08)", color: "#fff", cursor: "pointer", fontSize: "11px", fontWeight: 700 }}
+        >
+          Sign out
+        </button>
       </div>
     </div>
   );
@@ -966,8 +983,9 @@ export default function OracleAgentHub() {
   const [confList, setConfList] = useState([]);
   const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");  // NEW: Bearer token from user
   const chatRef = useRef(null);
+  const { token, user: authUser, signOut } = useAuth();
 
-  const user = { name: "Rajesh Kumar", initials: "RK", id: "rk@splcg.com" };
+  const user = authUser || { name: "Guest", initials: "G", id: "guest" };
   const selectedAgent = AGENTS.find(agent => agent.id === activeAgentId) || null;
 
   const scrollToBottom = useCallback(() => {
@@ -1016,8 +1034,8 @@ export default function OracleAgentHub() {
     await new Promise(r => setTimeout(r, 400));
     setRouterStage(2);
 
-    // NEW: Pass bearerToken to callRouterAPI
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken);
+    // NEW: Pass bearerToken and auth token to callRouterAPI
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken, token);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
@@ -1062,7 +1080,7 @@ export default function OracleAgentHub() {
       `}</style>
 
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: T.bg, minHeight: "500px" }}>
-        <Header user={user} />
+        <Header user={user} onSignOut={signOut} />
         <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
         
         {/* NEW: Bearer Token Input Section */}

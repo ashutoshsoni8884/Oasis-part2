@@ -35,6 +35,7 @@ pydantic_core==2.46.2
 pyparsing==3.3.2
 python-dotenv==1.1.0
 PyYAML==6.0.3
+PyJWT==2.8.0
 requests==2.33.1
 SQLAlchemy==2.0.49
 starlette==0.46.2
@@ -47,3 +48,4 @@ urllib3==2.6.3
 uvicorn==0.34.2
 watchfiles==1.1.1
 websockets==16.0
+email-validator==2.3.0
