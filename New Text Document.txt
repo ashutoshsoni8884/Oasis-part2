@@ -127,3 +127,62 @@ Check backend logs for classification details.
 Use browser dev tools: Network tab for /api/chat request/response.
 If "Failed to fetch", ensure both servers are running and CORS allows the origin.
 This setup simulates an enterprise AI router, routing queries to specialized agents for structured insights. In production, configure real APIs for live Oracle data. If you have questions about specific parts (e.g., adding a new agent), let me know!
+
+
+----------------------------------------------------
+Flow
+
+The frontend starts in main.tsx (line 6), renders App.tsx (line 4), and App renders the real UI in OracleAgentHub.jsx (line 908).
+
+The actual frontend -> backend connection is in OracleAgentHub.jsx (line 189):
+
+BACKEND_URL is hardcoded as http://127.0.0.1:8000
+submitChatJob() posts to POST /api/chat at OracleAgentHub.jsx (line 195)
+pollChatJob() polls GET /api/chat/{jobId} at OracleAgentHub.jsx (line 230)
+callRouterAPI() combines both at OracleAgentHub.jsx (line 288)
+user submit happens in handleQuery() at OracleAgentHub.jsx (line 941), which passes the bearerToken to the backend at OracleAgentHub.jsx (line 964)
+So in short: Frontend/src/OracleAgentHub.jsx is the key file that connects frontend to backend.
+
+Backend
+
+The backend app is created in Backend/main.py (line 22) and the chat routes are mounted with app.include_router(chat_router) at Backend/main.py (line 39).
+
+Those routes live in Backend/routers/chat.py (line 20):
+
+POST /api/chat at chat.py (line 20)
+GET /api/chat/{job_id} at chat.py (line 148)
+What happens inside POST /api/chat:
+
+Request shape is defined in Backend/models/chat.py (line 11) by ChatRequest, including query, history, and bearer_token.
+Intent is classified in Backend/services/intent_classifier.py (line 171).
+Matching agent metadata comes from Backend/services/agent_registry.py (line 56).
+A job is stored in memory by Backend/utils/job_manager.py (line 18).
+The backend logs the prompt into DB using SessionLocal + PromptLog in Backend/routers/chat.py (line 105).
+Then it calls Oracle service through Backend/services/oracle_agent_service.py (line 27).
+So the main backend orchestration file is Backend/routers/chat.py.
+
+Backend -> DB
+
+The DB connection is defined in Backend/db.py (line 14):
+
+DATABASE_URL is built at db.py (line 14)
+SQLAlchemy engine is created at db.py (line 16)
+session factory SessionLocal is at db.py (line 17)
+the DB table model PromptLog is at db.py (line 22)
+tables are auto-created at db.py (line 35)
+DB credentials come from Backend/config.py (line 37):
+
+DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD at config.py (line 37)
+Where backend actually uses the DB:
+
+Backend/routers/chat.py (line 105) opens SessionLocal()
+Backend/routers/chat.py (line 107) creates PromptLog(...)
+then db.add(...), db.commit()
+So the backend -> DB connection is mainly:
+
+setup: Backend/db.py
+config: Backend/config.py
+usage: Backend/routers/chat.py
+One important detail: this backend is connected to both PostgreSQL and Oracle Fusion API. PostgreSQL is only being used here for logging prompts, while the real business response is fetched from Oracle in Backend/services/oracle_agent_service.py (line 27).
+
+Your bearer-token refresh issue is probably in OracleAgentHub.jsx (line 918) because the token is loaded once from localStorage on component init and written back only on input change. I can trace that next and show exactly why it is not refreshing on a new visit.

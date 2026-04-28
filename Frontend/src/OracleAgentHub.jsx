@@ -88,6 +88,34 @@ const AGENTS = [
   },
 ];
 
+const AGENT_QUICK_PROMPTS = {
+  ar: [
+    "Show unpaid invoices for Siemens",
+    "Generate ageing report for Q1 receivables",
+    "Show credit limit history for Siemens",
+  ],
+  ppm: [
+    "Which projects are at margin risk this quarter?",
+    "Show revenue forecast for Project Alpha",
+    "Compare Q1 vs Q2 margins",
+  ],
+  finance: [
+    "Why is the month-end close delayed?",
+    "Show full close checklist",
+    "Who owns the accruals review?",
+  ],
+  procurement: [
+    "List open purchase orders above $50,000",
+    "Show vendor spend YTD",
+    "List POs expiring this month",
+  ],
+  hcm: [
+    "Pending leave requests for my team",
+    "Show payroll calendar for May",
+    "Team availability report this quarter",
+  ],
+};
+
 // ─── Mock Router API ──────────────────────────────────────────────────────────
 const INTENT_PATTERNS = [
   { pattern: /invoice|unpaid|receivable|ar|credit|ageing|aging|siemens|dunning|overdue|outstanding/i, intent: "AR_CREDIT_QUERY", agent: "ar", conf: 0.96 },
@@ -713,16 +741,37 @@ function MessageBubble({ msg, agents, onFollowUp }) {
 }
 
 // ─── Sidebar: Agent Panel ─────────────────────────────────────────────────────
-function AgentPanel({ agents, activeAgentId, stats }) {
+function AgentPanel({ agents, activeAgentId, stats, onSelectAgent }) {
   return (
     <div style={{ width: "220px", flexShrink: 0, borderRight: `1px solid ${T.border}`, background: T.white, display: "flex", flexDirection: "column", overflowY: "auto" }}>
       <div style={{ padding: "14px 16px 10px", borderBottom: `1px solid ${T.border}` }}>
         <div style={{ fontSize: "10px", fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Active Agents</div>
-        <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>{agents.length} agents online</div>
+        <div style={{ fontSize: "11px", color: T.muted, marginTop: "2px" }}>
+          {activeAgentId ? "1 agent selected" : `${agents.length} agents online`}
+        </div>
       </div>
       <div style={{ padding: "8px", flex: 1 }}>
         {agents.map(a => (
-          <div key={a.id} style={{ borderRadius: T.radius, padding: "9px 10px", marginBottom: "3px", border: `1px solid ${a.id === activeAgentId ? a.color + "44" : "transparent"}`, background: a.id === activeAgentId ? a.bg : "transparent", transition: "all 0.2s" }}>
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onSelectAgent(a.id)}
+            aria-pressed={a.id === activeAgentId}
+            title={a.description}
+            style={{ width: "100%", borderRadius: T.radius, padding: "9px 10px", marginBottom: "3px", border: `1px solid ${a.id === activeAgentId ? a.color + "44" : "transparent"}`, background: a.id === activeAgentId ? a.bg : "transparent", transition: "all 0.2s", textAlign: "left", cursor: "pointer", fontFamily: "inherit" }}
+            onMouseEnter={e => {
+              if (a.id !== activeAgentId) {
+                e.currentTarget.style.background = T.bg;
+                e.currentTarget.style.borderColor = T.border;
+              }
+            }}
+            onMouseLeave={e => {
+              if (a.id !== activeAgentId) {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.borderColor = "transparent";
+              }
+            }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "16px" }}>{a.icon}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -732,9 +781,9 @@ function AgentPanel({ agents, activeAgentId, stats }) {
               <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: T.success, flexShrink: 0 }} title="Online" />
             </div>
             {a.id === activeAgentId && (
-              <div style={{ marginTop: "6px", fontSize: "10px", color: a.color, fontStyle: "italic", paddingLeft: "24px" }}>Active ↗</div>
+              <div style={{ marginTop: "6px", fontSize: "10px", color: a.color, fontStyle: "italic", paddingLeft: "24px" }}>Selected - click again to clear</div>
             )}
-          </div>
+          </button>
         ))}
       </div>
       <div style={{ padding: "12px 16px", borderTop: `1px solid ${T.border}`, background: T.bg }}>
@@ -919,6 +968,7 @@ export default function OracleAgentHub() {
   const chatRef = useRef(null);
 
   const user = { name: "Rajesh Kumar", initials: "RK", id: "rk@splcg.com" };
+  const selectedAgent = AGENTS.find(agent => agent.id === activeAgentId) || null;
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" }); }, 80);
@@ -932,11 +982,17 @@ export default function OracleAgentHub() {
     avgConf: confList.length ? Math.round(confList.reduce((a, b) => a + b, 0) / confList.length * 100) : "—",
   };
 
-  const suggestions = messages.length === 0 ? [] : [
-    "Show credit limit for Siemens",
-    "Generate ageing report Q1",
-    "Compare Q1 vs Q2 margins",
-  ].slice(0, 2);
+  const suggestions = selectedAgent
+    ? AGENT_QUICK_PROMPTS[selectedAgent.id].slice(0, 3)
+    : messages.length === 0 ? [] : [
+        "Show credit limit for Siemens",
+        "Generate ageing report Q1",
+        "Compare Q1 vs Q2 margins",
+      ].slice(0, 2);
+
+  function handleAgentSelect(agentId) {
+    setActiveAgentId(prev => (prev === agentId ? null : agentId));
+  }
 
   async function handleQuery(queryText) {
     if (loading) return;
@@ -1045,7 +1101,7 @@ export default function OracleAgentHub() {
         </div>
 
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <AgentPanel agents={AGENTS} activeAgentId={activeAgentId} stats={sessionStats} />
+          <AgentPanel agents={AGENTS} activeAgentId={activeAgentId} stats={sessionStats} onSelectAgent={handleAgentSelect} />
 
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: T.bg }}>
             {messages.length === 0 && !loading ? (
@@ -1067,7 +1123,7 @@ export default function OracleAgentHub() {
                 )}
               </div>
             )}
-            <QueryInputBar onSubmit={handleQuery} disabled={loading} suggestions={messages.length > 0 ? suggestions : []} />
+            <QueryInputBar onSubmit={handleQuery} disabled={loading} suggestions={suggestions} />
           </div>
         </div>
       </div>
