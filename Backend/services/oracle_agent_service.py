@@ -43,7 +43,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
     settings = get_settings()
     
     # Construct base URL from settings
-    base_url = f"https://{settings.FUSION_HOST}/api/agents/v2"
+    # base_url = f"https://{settings.FUSION_HOST}/api/agents/v2"
+    base_url = f"https://{settings.FUSION_HOST}/api/fusion-ai/orchestrator/agent/v2/{settings.AGENT_TEAM_CODE}"
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -114,7 +115,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 message=f"Could not reach Oracle Fusion: {str(e)}",
             )
 
-        if invoke_response.status_code != 200:
+        # if invoke_response.status_code != 200:
+        if invoke_response.status_code not in (200, 202):
             logger.error(f"[{job_id}] Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
             logger.error(f"[{job_id}] Response headers: {invoke_response.headers}")
             job_manager.update_job(
