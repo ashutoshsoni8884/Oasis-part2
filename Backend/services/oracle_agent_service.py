@@ -8,11 +8,11 @@ Implements the async invoke-then-poll pattern:
 import asyncio
 import logging
 import httpx
-from Backend.config import get_settings
-from Backend.utils.oauth import get_oracle_token, get_basic_auth_header
-from Backend.services.response_formatter import format_oracle_response
-from Backend.models.chat import ChatResponse
-from Backend.utils import job_manager
+from config import get_settings
+from utils.oauth import get_oracle_token, get_basic_auth_header
+from services.response_formatter import format_oracle_response
+from models.chat import ChatResponse
+from utils import job_manager
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
     settings = get_settings()
     
     # Construct base URL from settings
-    base_url = f"https://{settings.FUSION_HOST}/api/agents/v2"
+    host = settings.FUSION_HOST.replace('https://', '').replace('http://', '').rstrip('/')
+    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{settings.AGENT_TEAM_CODE}"
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -89,6 +90,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         "status": "PUBLISHED",
         "parameters": {},
         "conversationId": None,
+        "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
     }
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -96,6 +98,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         logger.info(f"[{job_id}] Invoking Oracle agent: {settings.AGENT_TEAM_CODE} with query: {query[:80]}...")
 
         try:
+            logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
             invoke_response = await client.post(
                 f"{base_url}/invokeAsync",
                 json=invoke_payload,
@@ -114,7 +117,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 message=f"Could not reach Oracle Fusion: {str(e)}",
             )
 
-        if invoke_response.status_code != 200:
+        if invoke_response.status_code not in (200, 202):
             logger.error(f"[{job_id}] Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
             logger.error(f"[{job_id}] Response headers: {invoke_response.headers}")
             job_manager.update_job(
@@ -142,6 +145,16 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 fallback=True,
                 message="Failed to parse Oracle response.",
             )
+
+        # DEBUG: Log full invoke response
+        import json as _json
+        logger.info(f"[{job_id}] ===== INVOKE RESPONSE (HTTP {invoke_response.status_code}) =====")
+        logger.info(f"[{job_id}] {_json.dumps(invoke_data, indent=2, default=str)}")
+        try:
+            with open("debug_invoke_response.json", "w") as _f:
+                _json.dump(invoke_data, _f, indent=2, default=str)
+        except Exception:
+            pass
 
         oracle_job_id = invoke_data.get("jobId")
         conversation_id = invoke_data.get("conversationId")
@@ -241,6 +254,16 @@ async def _poll_oracle_async(
             except Exception as e:
                 logger.warning(f"[{api_job_id}] Failed to parse poll response: {e}")
                 continue
+
+            # DEBUG: Log full poll response
+            import json as _json
+            logger.info(f"[{api_job_id}] ===== POLL RESPONSE (HTTP {status_response.status_code}) =====")
+            logger.info(f"[{api_job_id}] {_json.dumps(status_data, indent=2, default=str)}")
+            try:
+                with open("debug_poll_response.json", "w") as _f:
+                    _json.dump(status_data, _f, indent=2, default=str)
+            except Exception:
+                pass
                 
             status = status_data.get("status", "").upper()
 
@@ -267,14 +290,46 @@ async def _poll_oracle_async(
                 return
 
             elif status == "ERROR":
-                error_msg = status_data.get("error", "Unknown error from Oracle agent")
-                logger.error(f"[{api_job_id}] Oracle agent error: {error_msg}")
+                raw_error = status_data.get("error", "")
+                oracle_output = status_data.get("output", "")
+                logger.error(f"[{api_job_id}] Oracle agent error: {raw_error}")
+                logger.error(f"[{api_job_id}] Oracle error full status_data: {status_data}")
                 
-                # Update job_manager with error
+                # If there's partial output despite the error, try to use it
+                if oracle_output:
+                    logger.info(f"[{api_job_id}] Oracle agent returned partial output despite error")
+                    result = format_oracle_response(
+                        oracle_output=oracle_output,
+                        intent=intent,
+                        confidence=confidence,
+                        agent_id=agent_id,
+                    )
+                    job_manager.update_job(
+                        api_job_id,
+                        status="COMPLETE",
+                        result=result.dict() if hasattr(result, 'dict') else result,
+                    )
+                    return
+                
+                # Build a user-friendly error message
+                if "404" in str(raw_error):
+                    friendly_error = (
+                        f"The Oracle agent could not find the requested data. "
+                        f"The resource or customer ID may not exist in Oracle Fusion. "
+                        f"(Details: {raw_error})"
+                    )
+                elif "401" in str(raw_error) or "403" in str(raw_error):
+                    friendly_error = (
+                        f"Authentication failed with Oracle Fusion. "
+                        f"Please check your bearer token. (Details: {raw_error})"
+                    )
+                else:
+                    friendly_error = f"Oracle agent error: {raw_error or 'Unknown error'}"
+                
                 job_manager.update_job(
                     api_job_id,
                     status="ERROR",
-                    error=error_msg,
+                    error=friendly_error,
                 )
                 return
 

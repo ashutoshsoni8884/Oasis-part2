@@ -6,12 +6,12 @@ Async pattern: POST returns job_id immediately, GET polls for result
 import logging
 from fastapi import APIRouter, HTTPException
 
-from Backend.config import get_settings
-from Backend.models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
-from Backend.services import intent_classifier
-from Backend.services.agent_registry import get_agent_for_intent
-from Backend.db import SessionLocal, PromptLog
-from Backend.utils import job_manager
+from config import get_settings
+from models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
+from services import intent_classifier
+from services.agent_registry import get_agent_for_intent
+from db import SessionLocal, PromptLog
+from utils import job_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -123,12 +123,12 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
     # ── Step 6: Invoke Oracle agent asynchronously ───────────────────────
     # # (Mock mode)
     # if settings.MOCK_MODE:
-    #     from Backend.services.mock_agent_service import get_mock_response
+    #     from services.mock_agent_service import get_mock_response
     #     response = await get_mock_response(agent_id, intent, confidence, query)
     #     job_manager.update_job(api_job_id, status="COMPLETE", result=response)
     # else:
     # (Real mode)
-    from Backend.services.oracle_agent_service import invoke_oracle_agent
+    from services.oracle_agent_service import invoke_oracle_agent
     await invoke_oracle_agent(
         query=query,
         intent=intent,
@@ -253,10 +253,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     # ── Step 4: Invoke agent (mock or real) ─────────────────────────────
     if settings.MOCK_MODE:
-        from Backend.services.mock_agent_service import get_mock_response
+        from services.mock_agent_service import get_mock_response
         response = await get_mock_response(agent_id, intent, confidence, query)
     else:
-        from Backend.services.oracle_agent_service import invoke_oracle_agent
+        from services.oracle_agent_service import invoke_oracle_agent
         response = await invoke_oracle_agent(query, intent, confidence, agent_id, request.bearer_token, request.job_id)
 
     logger.info(f"Response: success={response.success}, agent={response.agent_id}")
