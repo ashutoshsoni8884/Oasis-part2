@@ -5,7 +5,7 @@ Used when MOCK_MODE=true (default) or Oracle credentials are unavailable.
 
 import asyncio
 import random
-from Backend.models.chat import ChatResponse, KPI, ChartData, ChartDataset
+from models.chat import ChatResponse, KPI, ChartData, ChartDataset
 
 
 # ─── Mock response data per agent ──────────────────────────────────────────────
