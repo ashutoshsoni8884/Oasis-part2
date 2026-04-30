@@ -5,8 +5,8 @@ the structured ChatResponse schema the frontend expects.
 
 import logging
 import re
-from models.chat import ChatResponse, KPI, ChartData, ChartDataset
-from services.agent_registry import get_agent
+from Backend.models.chat import ChatResponse, KPI, ChartData, ChartDataset
+from Backend.services.agent_registry import get_agent
 
 logger = logging.getLogger(__name__)
 
