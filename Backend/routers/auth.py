@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -89,9 +89,9 @@ async def register(form_data: RegisterRequest, db: Session = Depends(get_db)):
 
     user = create_user(db, form_data.username, form_data.email, form_data.password)
     create_audit_log(db, user.id, "register", "/api/auth/register")
-    return UserRead.from_orm(user)
+    return user
 
 
 @router.get("/me", response_model=UserRead)
 async def me(current_user=Depends(get_current_user)):
-    return UserRead.from_orm(current_user)
+    return current_user

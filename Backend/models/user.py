@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
 
 from Backend.db import Base
@@ -30,5 +30,4 @@ class UserRead(BaseModel):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

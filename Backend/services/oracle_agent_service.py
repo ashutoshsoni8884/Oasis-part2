@@ -8,11 +8,11 @@ Implements the async invoke-then-poll pattern:
 import asyncio
 import logging
 import httpx
-from config import get_settings
-from utils.oauth import get_oracle_token, get_basic_auth_header
-from services.response_formatter import format_oracle_response
-from models.chat import ChatResponse
-from utils import job_manager
+from Backend.config import get_settings
+from Backend.utils.oauth import get_oracle_token, get_basic_auth_header
+from Backend.services.response_formatter import format_oracle_response
+from Backend.models.chat import ChatResponse
+from Backend.utils import job_manager
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +86,11 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         "message": query,
         "conversational": True,
         "invocationMode": "END_USER",
-        "version": settings.AGENT_TEAM_VERSION,
+        # "version": settings.AGENT_TEAM_VERSION, # Omit version to use latest PUBLISHED
         "status": "PUBLISHED",
         "parameters": {},
         "conversationId": None,
-        "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
+        "useInternalConfig": False,  # Changed to False as it was working previously
     }
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:

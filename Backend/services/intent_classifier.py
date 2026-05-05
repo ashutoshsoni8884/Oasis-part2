@@ -8,8 +8,8 @@ Falls back to regex pattern matching if the LLM is unavailable.
 import json
 import re
 import logging
-from config import get_settings
-from services.agent_registry import get_all_agents, get_agent_for_intent
+from Backend.config import get_settings
+from Backend.services.agent_registry import get_all_agents, get_agent_for_intent
 
 logger = logging.getLogger(__name__)
 

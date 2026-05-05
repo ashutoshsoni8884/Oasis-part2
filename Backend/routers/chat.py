@@ -126,12 +126,12 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     # ── Step 6: Invoke Oracle agent asynchronously ───────────────────────
     # # (Mock mode)
     # if settings.MOCK_MODE:
-    #     from services.mock_agent_service import get_mock_response
+    #     from Backend.services.mock_agent_service import get_mock_response
     #     response = await get_mock_response(agent_id, intent, confidence, query)
     #     job_manager.update_job(api_job_id, status="COMPLETE", result=response)
     # else:
     # (Real mode)
-    from services.oracle_agent_service import invoke_oracle_agent
+    from Backend.services.oracle_agent_service import invoke_oracle_agent
     await invoke_oracle_agent(
         query=query,
         intent=intent,
@@ -256,10 +256,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     # ── Step 4: Invoke agent (mock or real) ─────────────────────────────
     if settings.MOCK_MODE:
-        from services.mock_agent_service import get_mock_response
+        from Backend.services.mock_agent_service import get_mock_response
         response = await get_mock_response(agent_id, intent, confidence, query)
     else:
-        from services.oracle_agent_service import invoke_oracle_agent
+        from Backend.services.oracle_agent_service import invoke_oracle_agent
         response = await invoke_oracle_agent(query, intent, confidence, agent_id, request.bearer_token, request.job_id)
 
     logger.info(f"Response: success={response.success}, agent={response.agent_id}")
