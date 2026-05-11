@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     AGENT_TEAM_CODE: str = ""
     AGENT_TEAM_VERSION: int = 1
 
+    # ── Local Ollama ─────────────────────────────────────────────────────
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    # Default points to the model tag installed locally (adjust if needed).
+    OLLAMA_MODEL: str = "llama3.2:latest"
+    OLLAMA_TIMEOUT_SECONDS: float = 120.0
+
     # ── Database ───────────────────────────────────────────────────────
     DB_HOST: str = "172.16.132.100"
     DB_PORT: int = 5432

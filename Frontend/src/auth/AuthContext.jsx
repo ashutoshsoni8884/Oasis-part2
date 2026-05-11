@@ -4,16 +4,16 @@ import { login as loginApi } from "../api/auth";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem("appToken") || "");
+  const [token, setToken] = useState(() => sessionStorage.getItem("appToken") || "");
   const [user, setUser] = useState(() => {
-    const stored = localStorage.getItem("appUser");
+    const stored = sessionStorage.getItem("appUser");
     return stored ? JSON.parse(stored) : null;
   });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!token) {
-      localStorage.removeItem("appUser");
+      sessionStorage.removeItem("appUser");
       setUser(null);
     }
   }, [token]);
@@ -28,9 +28,9 @@ export function AuthProvider({ children }) {
         initials: username.slice(0, 1).toUpperCase(),
       };
       setToken(data.access_token);
-      localStorage.setItem("appToken", data.access_token);
+      sessionStorage.setItem("appToken", data.access_token);
       setUser(authUser);
-      localStorage.setItem("appUser", JSON.stringify(authUser));
+      sessionStorage.setItem("appUser", JSON.stringify(authUser));
       return data;
     } finally {
       setLoading(false);
@@ -40,8 +40,8 @@ export function AuthProvider({ children }) {
   const signOut = () => {
     setToken("");
     setUser(null);
-    localStorage.removeItem("appToken");
-    localStorage.removeItem("appUser");
+    sessionStorage.removeItem("appToken");
+    sessionStorage.removeItem("appUser");
   };
 
   return (

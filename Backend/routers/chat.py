@@ -6,7 +6,6 @@ Async pattern: POST returns job_id immediately, GET polls for result
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 
-from Backend.config import get_settings
 from Backend.models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
 from Backend.models.user import User
 from Backend.services import intent_classifier
@@ -27,13 +26,12 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     
     Requires:
     - query: The user query
-    - bearer_token: Authentication token for Oracle Fusion
 
     Optional:
     - session_id: Session identifier
     - history: Conversation history
+    - bearer_token: Authentication token for Oracle Fusion (optional if OAuth/basic auth is configured)
     """
-    settings = get_settings()
     query = request.query.strip()
 
     if not query:
@@ -42,12 +40,6 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
             detail="Query cannot be empty"
         )
     
-    if not request.bearer_token:
-        raise HTTPException(
-            status_code=401,
-            detail="bearer_token is required for authentication"
-        )
-
     logger.info(f"Chat query submitted: {query[:100]}")
 
     # ── Step 1: Classify intent ─────────────────────────────────────────
@@ -123,23 +115,31 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     finally:
         db.close()
 
-    # ── Step 6: Invoke Oracle agent asynchronously ───────────────────────
-    # # (Mock mode)
-    # if settings.MOCK_MODE:
-    #     from Backend.services.mock_agent_service import get_mock_response
-    #     response = await get_mock_response(agent_id, intent, confidence, query)
-    #     job_manager.update_job(api_job_id, status="COMPLETE", result=response)
-    # else:
-    # (Real mode)
-    from Backend.services.oracle_agent_service import invoke_oracle_agent
-    await invoke_oracle_agent(
-        query=query,
-        intent=intent,
-        confidence=confidence,
-        agent_id=agent_id,
-        bearer_token=request.bearer_token,
-        job_id=api_job_id,
-    )
+    # ── Step 6: Invoke agent asynchronously (mock or Oracle Fusion) ─
+    from Backend.config import get_settings
+
+    settings = get_settings()
+
+    if settings.MOCK_MODE:
+        from Backend.services.mock_agent_service import get_mock_response
+
+        response = await get_mock_response(agent_id, intent, confidence, query)
+        job_manager.update_job(
+            api_job_id,
+            status="COMPLETE",
+            result=response.dict() if hasattr(response, "dict") else response,
+        )
+    else:
+        from Backend.services.oracle_agent_service import invoke_oracle_agent
+
+        await invoke_oracle_agent(
+            query=query,
+            intent=intent,
+            confidence=confidence,
+            agent_id=agent_id,
+            bearer_token=request.bearer_token,
+            job_id=api_job_id,
+        )
 
     return JobResponse(
         job_id=api_job_id,

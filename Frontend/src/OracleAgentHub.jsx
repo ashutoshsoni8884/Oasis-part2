@@ -2,27 +2,125 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuth } from "./auth/AuthContext";
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
+const THEME_PRESETS = {
+  light: {
+    oracle: "#C74634",
+    oracleDark: "#9E2B1C",
+    oracleLight: "#F9EAE7",
+    navy: "#1A2B4A",
+    navyMid: "#243860",
+    navyLight: "#EEF2F8",
+    slate: "#4A5568",
+    muted: "#718096",
+    border: "#E2E8F0",
+    borderDark: "#CBD5E0",
+    bg: "#F7F9FC",
+    white: "#FFFFFF",
+    success: "#276749",
+    successBg: "#E6F4EC",
+    warning: "#7B4F12",
+    warningBg: "#FEF3CD",
+    danger: "#9E2B1C",
+    dangerBg: "#FDECEA",
+    info: "#1A5C99",
+    infoBg: "#E8F1FB",
+  },
+  red: {
+    oracle: "#B8322A",
+    oracleDark: "#8C201A",
+    oracleLight: "#FCE8E6",
+    navy: "#6B1D1B",
+    navyMid: "#7E2A27",
+    navyLight: "#F9E9E8",
+    slate: "#5A4545",
+    muted: "#7D6666",
+    border: "#E9D2D2",
+    borderDark: "#DDBABA",
+    bg: "#FFF6F6",
+    white: "#FFFFFF",
+    success: "#2F855A",
+    successBg: "#E6F7EE",
+    warning: "#9C4221",
+    warningBg: "#FFF1E6",
+    danger: "#B8322A",
+    dangerBg: "#FDE8E8",
+    info: "#9B2C2C",
+    infoBg: "#FDECEC",
+  },
+  dark: {
+    oracle: "#E05B4A",
+    oracleDark: "#C74634",
+    oracleLight: "#43201C",
+    navy: "#0F172A",
+    navyMid: "#1E293B",
+    navyLight: "#1F2A3B",
+    slate: "#CBD5E1",
+    muted: "#94A3B8",
+    border: "#334155",
+    borderDark: "#475569",
+    bg: "#0B1220",
+    white: "#111827",
+    success: "#34D399",
+    successBg: "#113327",
+    warning: "#FBBF24",
+    warningBg: "#3A2D10",
+    danger: "#F87171",
+    dangerBg: "#3F1D1D",
+    info: "#60A5FA",
+    infoBg: "#1B2A42",
+  },
+  forest: {
+    oracle: "#2F855A",
+    oracleDark: "#276749",
+    oracleLight: "#E6F4EC",
+    navy: "#1B4332",
+    navyMid: "#2D6A4F",
+    navyLight: "#EAF4EF",
+    slate: "#3D5A4B",
+    muted: "#5F7A6B",
+    border: "#D6E6DC",
+    borderDark: "#BDD5C6",
+    bg: "#F4FAF6",
+    white: "#FFFFFF",
+    success: "#2F855A",
+    successBg: "#E6F4EC",
+    warning: "#9C6B1F",
+    warningBg: "#FFF4DA",
+    danger: "#B8322A",
+    dangerBg: "#FDECEA",
+    info: "#2C7A7B",
+    infoBg: "#E6F7F8",
+  },
+};
+
+const THEME_OPTIONS = [
+  { value: "light", label: "Light" },
+  { value: "red", label: "Red" },
+  { value: "dark", label: "Dark" },
+  { value: "forest", label: "Forest" },
+];
+
 const T = {
-  oracle: "#C74634",
-  oracleDark: "#9E2B1C",
-  oracleLight: "#F9EAE7",
-  navy: "#1A2B4A",
-  navyMid: "#243860",
-  navyLight: "#EEF2F8",
-  slate: "#4A5568",
-  muted: "#718096",
-  border: "#E2E8F0",
-  borderDark: "#CBD5E0",
-  bg: "#F7F9FC",
-  white: "#FFFFFF",
-  success: "#276749",
-  successBg: "#E6F4EC",
-  warning: "#7B4F12",
-  warningBg: "#FEF3CD",
-  danger: "#9E2B1C",
-  dangerBg: "#FDECEA",
-  info: "#1A5C99",
-  infoBg: "#E8F1FB",
+  oracle: "var(--theme-oracle)",
+  oracleDark: "var(--theme-oracle-dark)",
+  oracleLight: "var(--theme-oracle-light)",
+  navy: "var(--theme-navy)",
+  navyMid: "var(--theme-navy-mid)",
+  navyLight: "var(--theme-navy-light)",
+  slate: "var(--theme-slate)",
+  muted: "var(--theme-muted)",
+  border: "var(--theme-border)",
+  borderDark: "var(--theme-border-dark)",
+  bg: "var(--theme-bg)",
+  white: "var(--theme-white)",
+  success: "var(--theme-success)",
+  successBg: "var(--theme-success-bg)",
+  warning: "var(--theme-warning)",
+  warningBg: "var(--theme-warning-bg)",
+  danger: "var(--theme-danger)",
+  dangerBg: "var(--theme-danger-bg)",
+  info: "var(--theme-info)",
+  infoBg: "var(--theme-info-bg)",
   shadow: "0 1px 3px rgba(26,43,74,0.08), 0 4px 12px rgba(26,43,74,0.06)",
   shadowMd: "0 4px 16px rgba(26,43,74,0.10), 0 1px 4px rgba(26,43,74,0.06)",
   radius: "6px",
@@ -215,8 +313,7 @@ const MOCK_RESPONSES = {
 };
 
 // ─── Backend API call ─────────────────────────────────────────────────────────
-// const BACKEND_URL = "http://127.0.0.1:8000";
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8001";
 
 // ── New Async API Flow ──────────────────────────────────────────────────────────
 // POST /api/chat returns {job_id, status: "QUEUED"}
@@ -882,7 +979,7 @@ function QueryInputBar({ onSubmit, disabled, suggestions }) {
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ user, onSignOut }) {
+function Header({ user, onSignOut, themeKey, onThemeChange }) {
   return (
     <div style={{ height: "54px", background: T.navy, display: "flex", alignItems: "center", padding: "0 20px", gap: "12px", flexShrink: 0, borderBottom: `3px solid ${T.oracle}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
@@ -895,6 +992,30 @@ function Header({ user, onSignOut }) {
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.72)", fontWeight: 600 }}>Theme</span>
+          <select
+            value={themeKey}
+            onChange={(e) => onThemeChange(e.target.value)}
+            style={{
+              padding: "5px 8px",
+              borderRadius: "6px",
+              border: "1px solid rgba(255,255,255,0.25)",
+              background: "rgba(255,255,255,0.1)",
+              color: "#fff",
+              fontSize: "11px",
+              fontWeight: 600,
+              outline: "none",
+              cursor: "pointer",
+            }}
+          >
+            {THEME_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value} style={{ color: "#111827" }}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
           <div style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#48BB78" }} />
           <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>All systems operational</span>
@@ -995,7 +1116,8 @@ export default function OracleAgentHub() {
   const [activeAgentId, setActiveAgentId] = useState(null);
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
-  const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");  // NEW: Bearer token from user
+  const [bearerToken, setBearerToken] = useState(sessionStorage.getItem("bearerToken") || "");  // Session-scoped token persistence
+  const [themeKey, setThemeKey] = useState(() => localStorage.getItem("hubTheme") || "light");
   const chatRef = useRef(null);
   const { token, user: authUser, signOut } = useAuth();
 
@@ -1007,6 +1129,32 @@ export default function OracleAgentHub() {
   }, []);
 
   useEffect(() => { scrollToBottom(); }, [messages, loading]);
+
+  useEffect(() => {
+    const selectedTheme = THEME_PRESETS[themeKey] || THEME_PRESETS.light;
+    const root = document.documentElement;
+    root.style.setProperty("--theme-oracle", selectedTheme.oracle);
+    root.style.setProperty("--theme-oracle-dark", selectedTheme.oracleDark);
+    root.style.setProperty("--theme-oracle-light", selectedTheme.oracleLight);
+    root.style.setProperty("--theme-navy", selectedTheme.navy);
+    root.style.setProperty("--theme-navy-mid", selectedTheme.navyMid);
+    root.style.setProperty("--theme-navy-light", selectedTheme.navyLight);
+    root.style.setProperty("--theme-slate", selectedTheme.slate);
+    root.style.setProperty("--theme-muted", selectedTheme.muted);
+    root.style.setProperty("--theme-border", selectedTheme.border);
+    root.style.setProperty("--theme-border-dark", selectedTheme.borderDark);
+    root.style.setProperty("--theme-bg", selectedTheme.bg);
+    root.style.setProperty("--theme-white", selectedTheme.white);
+    root.style.setProperty("--theme-success", selectedTheme.success);
+    root.style.setProperty("--theme-success-bg", selectedTheme.successBg);
+    root.style.setProperty("--theme-warning", selectedTheme.warning);
+    root.style.setProperty("--theme-warning-bg", selectedTheme.warningBg);
+    root.style.setProperty("--theme-danger", selectedTheme.danger);
+    root.style.setProperty("--theme-danger-bg", selectedTheme.dangerBg);
+    root.style.setProperty("--theme-info", selectedTheme.info);
+    root.style.setProperty("--theme-info-bg", selectedTheme.infoBg);
+    localStorage.setItem("hubTheme", themeKey);
+  }, [themeKey]);
 
   const sessionStats = {
     queries: messages.filter(m => m.role === "user").length,
@@ -1028,15 +1176,6 @@ export default function OracleAgentHub() {
 
   async function handleQuery(queryText) {
     if (loading) return;
-    
-    // NEW: Require bearer token before submitting
-    if (!bearerToken.trim()) {
-      setMessages(prev => [...prev, {
-        id: uuid(), role: "system", fallback: true, time: new Date(),
-        text: "⚠️  Bearer token required. Please enter your Oracle Fusion authentication token in the input field above.",
-      }]);
-      return;
-    }
 
     const userMsg = { id: uuid(), role: "user", text: queryText, time: new Date(), userName: user.name };
     setMessages(prev => [...prev, userMsg]);
@@ -1094,23 +1233,23 @@ export default function OracleAgentHub() {
       `}</style>
 
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: T.bg, minHeight: "500px" }}>
-        <Header user={user} onSignOut={signOut} />
+        <Header user={user} onSignOut={signOut} themeKey={themeKey} onThemeChange={setThemeKey} />
         <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
         
         {/* NEW: Bearer Token Input Section */}
         <div style={{ background: T.white, borderBottom: `1px solid ${T.border}`, padding: "12px 20px", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
-              <label style={{ fontSize: "11px", fontWeight: 600, color: T.muted, textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
-                🔐 Oracle Bearer Token (Required)
-              </label>
+          <label style={{ fontSize: "11px", fontWeight: 600, color: T.muted, textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
+            🔐 Oracle Bearer Token (Optional)
+          </label>
               <input
                 type="password"
                 placeholder="Paste your Oracle Fusion bearer token here..."
                 value={bearerToken}
                 onChange={(e) => {
                   setBearerToken(e.target.value);
-                  localStorage.setItem("bearerToken", e.target.value);  // Persist to localStorage
+                  sessionStorage.setItem("bearerToken", e.target.value);  // Persist only for current tab session
                 }}
                 disabled={loading}
                 style={{
@@ -1126,7 +1265,7 @@ export default function OracleAgentHub() {
                 }}
               />
               <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
-                {bearerToken ? "✓ Token loaded" : "⚠️  Paste your token to submit queries"}
+                {bearerToken ? "✓ Token loaded" : "Oracle mode: token optional if OAuth/basic auth is configured"}
               </div>
             </div>
           </div>
