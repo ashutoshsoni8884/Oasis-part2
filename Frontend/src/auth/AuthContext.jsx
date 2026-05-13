@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { login as loginApi } from "../api/auth";
+import { login as loginApi, register as registerApi } from "../api/auth";
 
 const AuthContext = createContext(null);
 
@@ -37,6 +37,17 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const signUp = async (username, email, password) => {
+    setLoading(true);
+    try {
+      await registerApi(username, email, password);
+      // Auto-login after successful registration
+      return await signIn(username, password);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const signOut = () => {
     setToken("");
     setUser(null);
@@ -45,7 +56,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ token, user, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ token, user, loading, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

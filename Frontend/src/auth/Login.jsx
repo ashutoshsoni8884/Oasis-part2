@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useAuth } from "./AuthContext";
+import Signup from "./Signup";
 
 export default function Login() {
   const { signIn, loading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [mode, setMode] = useState("login"); // "login" | "signup"
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -22,6 +24,10 @@ export default function Login() {
       setError(err.message || "Login failed. Please try again.");
     }
   };
+
+  if (mode === "signup") {
+    return <Signup onBackToLogin={() => setMode("login")} />;
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#F7F9FC", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
@@ -53,9 +59,16 @@ export default function Login() {
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
-        <p style={{ marginTop: "22px", fontSize: "12px", color: "#64748B" }}>
-          If you do not have an account, use the backend `/api/auth/register` endpoint to create one.
-        </p>
+        <div style={{ marginTop: "18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: "12px", color: "#64748B" }}>New here?</span>
+          <button
+            type="button"
+            onClick={() => setMode("signup")}
+            style={{ border: "none", background: "transparent", color: "#1D4ED8", cursor: "pointer", fontWeight: 700, fontSize: "12px", padding: 0 }}
+          >
+            Create an account
+          </button>
+        </div>
       </div>
     </div>
   );

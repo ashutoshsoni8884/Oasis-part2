@@ -37,14 +37,22 @@ class Settings(BaseSettings):
     PASSWORD_SALT: str = "oasis-default-salt"
 
     # ── Oracle AI Agent Studio ──────────────────────────────────────────
+    # Optional fallback/default if request doesn't send agent_team_code.
     AGENT_TEAM_CODE: str = ""
     AGENT_TEAM_VERSION: int = 1
 
-    # ── Local Ollama ─────────────────────────────────────────────────────
-    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
-    # Default points to the model tag installed locally (adjust if needed).
-    OLLAMA_MODEL: str = "llama3.2:latest"
-    OLLAMA_TIMEOUT_SECONDS: float = 120.0
+    # Comma-separated list of agent team codes this backend knows about.
+    # Used for:
+    # - GET /api/agents (dropdown population)
+    # - server-side validation of requested agent_team_code
+    # If empty, we fall back to AGENT_TEAM_CODE only (single-agent mode).
+    AVAILABLE_AGENT_TEAM_CODES: str = ""
+
+    # Placeholder authorization defaults (comma-separated).
+    # If empty:
+    # - non-admin users are restricted to AGENT_TEAM_CODE (if set)
+    # - admin users can access all AVAILABLE_AGENT_TEAM_CODES
+    DEFAULT_ALLOWED_AGENT_TEAM_CODES: str = ""
 
     # ── Database ───────────────────────────────────────────────────────
     DB_HOST: str = "172.16.132.100"

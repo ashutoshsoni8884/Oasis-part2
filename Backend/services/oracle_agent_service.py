@@ -24,7 +24,15 @@ REQUEST_TIMEOUT = 60.0
 _job_state = {}
 
 
-async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None) -> ChatResponse:
+async def invoke_oracle_agent(
+    query: str,
+    intent: str,
+    confidence: float,
+    agent_id: str,
+    bearer_token: str = None,
+    job_id: str = None,
+    agent_team_code: str | None = None,
+) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
     For the new async flow:
@@ -44,7 +52,20 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
     
     # Construct base URL from settings
     host = settings.FUSION_HOST.replace('https://', '').replace('http://', '').rstrip('/')
-    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{settings.AGENT_TEAM_CODE}"
+    team_code = agent_team_code or settings.AGENT_TEAM_CODE
+    if not team_code:
+        job_manager.update_job(
+            job_id,
+            status="ERROR",
+            error="No agent_team_code provided and no AGENT_TEAM_CODE fallback configured.",
+        )
+        return ChatResponse(
+            success=False,
+            fallback=True,
+            message="No agent team configured.",
+        )
+
+    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{team_code}"
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -95,7 +116,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         # ── Step 1: Invoke ──────────────────────────────────────────────
-        logger.info(f"[{job_id}] Invoking Oracle agent: {settings.AGENT_TEAM_CODE} with query: {query[:80]}...")
+        logger.info(f"[{job_id}] Invoking Oracle agent team: {team_code} with query: {query[:80]}...")
 
         try:
             logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")

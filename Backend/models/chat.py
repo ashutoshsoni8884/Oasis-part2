@@ -9,11 +9,17 @@ from datetime import datetime
 # ─── Request ────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    query: str
+    # Backward compatibility:
+    # - Old clients send `query`
+    # - New clients should send `message`
+    message: str | None = None
+    query: str | None = None
     session_id: str | None = None
     history: list[dict] | None = None
     bearer_token: str | None = None
     job_id: str | None = None
+    # Oracle AI Agent Studio team code (dynamic multi-agent selection)
+    agent_team_code: str | None = None
 
 
 # ─── Response sub-models ────────────────────────────────────────────────────────
