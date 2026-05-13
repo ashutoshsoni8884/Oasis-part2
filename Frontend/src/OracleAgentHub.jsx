@@ -186,7 +186,7 @@ const MOCK_RESPONSES = {
 };
 
 // ─── Backend API call ─────────────────────────────────────────────────────────
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "http://localhost:8000";
 
 // ── New Async API Flow ──────────────────────────────────────────────────────────
 // POST /api/chat returns {job_id, status: "QUEUED"}
@@ -703,11 +703,12 @@ function MessageBubble({ msg, agents, onFollowUp }) {
               <ConfidenceMeter value={msg.confidence} />
             </div>
           )}
-          {msg.html ? (
+          {msg.html && (
             <div style={{ fontSize: '13px', color: T.slate, lineHeight: 1.65, marginBottom: '12px' }} dangerouslySetInnerHTML={{ __html: msg.html }} />
-          ) : msg.narrative ? (
+          )}
+          {msg.narrative && (
             <NarrativeText text={msg.narrative} />
-          ) : null}
+          )}
           {msg.kpis && <KPIGrid kpis={msg.kpis} />}
           {msg.columns && msg.rows && <DataTable columns={msg.columns} rows={msg.rows} />}
           {msg.charts && msg.charts.length > 0 && (

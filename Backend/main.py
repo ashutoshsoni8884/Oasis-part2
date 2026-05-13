@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from routers.chat import router as chat_router
+from routers.agent_registry import router as agent_registry_router
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -37,6 +38,7 @@ app.add_middleware(
 
 # ── Routers ─────────────────────────────────────────────────────────────────────
 app.include_router(chat_router)
+app.include_router(agent_registry_router)
 
 
 # ── Health Check ────────────────────────────────────────────────────────────────

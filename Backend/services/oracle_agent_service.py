@@ -13,6 +13,11 @@ from utils.oauth import get_oracle_token, get_basic_auth_header
 from services.response_formatter import format_oracle_response
 from models.chat import ChatResponse
 from utils import job_manager
+from config import get_settings
+from utils.oauth import get_oracle_token, get_basic_auth_header
+from services.response_formatter import format_oracle_response
+from models.chat import ChatResponse
+from utils import job_manager
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +29,7 @@ REQUEST_TIMEOUT = 60.0
 _job_state = {}
 
 
-async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None) -> ChatResponse:
+async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None, version: int = None) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
     For the new async flow:
@@ -36,15 +41,20 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         query: User query
         intent: Classified intent
         confidence: Classification confidence
-        agent_id: Target agent ID
+        agent_id: Target agent ID (NOW DYNAMIC - receives Oracle Agent Team Code like "ARCREDITAGENTTEAM")
         bearer_token: Authentication token (required)
         job_id: API job_id (from job_manager)
+        version: Agent team version (optional, falls back to settings)
     """
     settings = get_settings()
     
+    # Use the provided version or fallback to settings
+    agent_version = version if version is not None else settings.AGENT_TEAM_VERSION
+    
     # Construct base URL from settings
     host = settings.FUSION_HOST.replace('https://', '').replace('http://', '').rstrip('/')
-    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{settings.AGENT_TEAM_CODE}"
+    # CHANGED: Use agent_id parameter instead of settings.AGENT_TEAM_CODE for dynamic routing
+    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{agent_id}"
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -86,18 +96,20 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         "message": query,
         "conversational": True,
         "invocationMode": "END_USER",
-        "version": settings.AGENT_TEAM_VERSION,
+        "version": agent_version,
         "status": "PUBLISHED",
         "parameters": {},
         "conversationId": None,
+        "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
         "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
     }
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         # ── Step 1: Invoke ──────────────────────────────────────────────
-        logger.info(f"[{job_id}] Invoking Oracle agent: {settings.AGENT_TEAM_CODE} with query: {query[:80]}...")
+        logger.info(f"[{job_id}] Invoking Oracle agent: {agent_id} with query: {query[:80]}...")
 
         try:
+            logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
             logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
             invoke_response = await client.post(
                 f"{base_url}/invokeAsync",
@@ -117,6 +129,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 message=f"Could not reach Oracle Fusion: {str(e)}",
             )
 
+        if invoke_response.status_code not in (200, 202):
         if invoke_response.status_code not in (200, 202):
             logger.error(f"[{job_id}] Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
             logger.error(f"[{job_id}] Response headers: {invoke_response.headers}")
@@ -145,6 +158,16 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 fallback=True,
                 message="Failed to parse Oracle response.",
             )
+
+        # DEBUG: Log full invoke response
+        import json as _json
+        logger.info(f"[{job_id}] ===== INVOKE RESPONSE (HTTP {invoke_response.status_code}) =====")
+        logger.info(f"[{job_id}] {_json.dumps(invoke_data, indent=2, default=str)}")
+        try:
+            with open("debug_invoke_response.json", "w") as _f:
+                _json.dump(invoke_data, _f, indent=2, default=str)
+        except Exception:
+            pass
 
         # DEBUG: Log full invoke response
         import json as _json
@@ -264,6 +287,16 @@ async def _poll_oracle_async(
                     _json.dump(status_data, _f, indent=2, default=str)
             except Exception:
                 pass
+
+            # DEBUG: Log full poll response
+            import json as _json
+            logger.info(f"[{api_job_id}] ===== POLL RESPONSE (HTTP {status_response.status_code}) =====")
+            logger.info(f"[{api_job_id}] {_json.dumps(status_data, indent=2, default=str)}")
+            try:
+                with open("debug_poll_response.json", "w") as _f:
+                    _json.dump(status_data, _f, indent=2, default=str)
+            except Exception:
+                pass
                 
             status = status_data.get("status", "").upper()
 
@@ -272,7 +305,7 @@ async def _poll_oracle_async(
             if status == "COMPLETE":
                 # Parse and format the Oracle response
                 oracle_output = status_data.get("output", "")
-                result = format_oracle_response(
+                result = await format_oracle_response(
                     oracle_output=oracle_output,
                     intent=intent,
                     confidence=confidence,
@@ -298,7 +331,7 @@ async def _poll_oracle_async(
                 # If there's partial output despite the error, try to use it
                 if oracle_output:
                     logger.info(f"[{api_job_id}] Oracle agent returned partial output despite error")
-                    result = format_oracle_response(
+                    result = await format_oracle_response(
                         oracle_output=oracle_output,
                         intent=intent,
                         confidence=confidence,
@@ -329,6 +362,7 @@ async def _poll_oracle_async(
                 job_manager.update_job(
                     api_job_id,
                     status="ERROR",
+                    error=friendly_error,
                     error=friendly_error,
                 )
                 return
