@@ -36,6 +36,16 @@ async def format_oracle_response(
 
     # Empty check
     if not oracle_output and not isinstance(oracle_output, dict):
+    # Safe string conversion and stripping
+    if isinstance(oracle_output, dict):
+        oracle_output_str = "" # We will handle dict below
+        oracle_output_stripped = ""
+    else:
+        oracle_output_str = str(oracle_output)
+        oracle_output_stripped = oracle_output_str.strip()
+
+    # Empty check
+    if not oracle_output and not isinstance(oracle_output, dict):
         return ChatResponse(
             success=False,
             fallback=True,
@@ -145,6 +155,10 @@ async def format_oracle_response(
         agent_name=agent.name if agent else agent_id,
         narrative=narrative,
         html=html,
+        kpis=kpis,
+        columns=columns,
+        rows=rows,
+        charts=charts,
         kpis=kpis,
         columns=columns,
         rows=rows,
