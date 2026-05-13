@@ -1,18 +1,23 @@
 """
 Chat Router — POST /api/chat, GET /api/chat/{job_id}
 Async pattern: POST returns job_id immediately, GET polls for result
-Uses Ollama + Database for intelligent agent routing
 """
 
 import logging
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 
-from config import get_settings
-from models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
-from services.ollama_router import route_to_agent
-from services.oracle_agent_service import invoke_oracle_agent
-from db import SessionLocal, PromptLog
-from utils import job_manager
+from Backend.config import get_settings
+from Backend.db import PromptLog, SessionLocal
+from Backend.models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
+from Backend.models.user import User
+from Backend.services import intent_classifier
+from Backend.services.agent_registry import get_agent_for_intent
+from Backend.services.agent_service import validate_agent_access
+from Backend.services.mock_agent_service import get_mock_response
+from Backend.services.oracle_agent_service import invoke_oracle_agent
+from Backend.utils import job_manager
+from Backend.utils.security import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -33,43 +38,52 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     - history: Conversation history
     - bearer_token: Authentication token for Oracle Fusion (optional if OAuth/basic auth is configured)
     """
-    query = request.query.strip()
+    settings = get_settings()
+    request_id = str(uuid4())
 
-    if not query:
+    message = (request.message or request.query or "").strip()
+
+    if not message:
         raise HTTPException(
             status_code=400,
-            detail="Query cannot be empty"
+            detail="Message cannot be empty"
         )
     
-    logger.info(f"Chat query submitted: {query[:100]}")
+    logger.info(
+        {
+            "event": "chat_submit",
+            "request_id": request_id,
+            "user_id": getattr(current_user, "id", None),
+            "username": getattr(current_user, "username", None),
+            "message_preview": message[:120],
+        }
+    )
 
-    # ── STEP 1: Use Ollama + Database to route to correct agent ─────────────
+    # ── Step 1: intent classification ─────────────────────────────────────────
     try:
-        routing_result = await route_to_agent(query)
+        classification = await intent_classifier.classify(message, request.history)
     except Exception as e:
-        logger.error(f"Ollama routing failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to route query: {str(e)}"
-        )
+        logger.error({"event": "intent_classification_failed", "request_id": request_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail="Failed to classify query intent")
 
-    # Check if routing was successful
-    if not routing_result["agent_code"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not route your query. {routing_result['reasoning']}. Please try rephrasing or ask about payments, subscriptions, or collections."
-        )
+    intent = classification["intent"]
+    agent_id = classification["agent_id"]
+    confidence = classification["confidence"]
 
-    agent_code = routing_result["agent_code"]
-    agent_name = routing_result["agent_name"]
-    confidence = routing_result["confidence"]
-    agent_version = routing_result.get("version")
+    if intent == "UNKNOWN" or not agent_id:
+        raise HTTPException(status_code=400, detail="Could not confidently match your query to an agent.")
 
-    logger.info(f"Ollama routed to: agent_code={agent_code}, agent_name={agent_name}, version={agent_version}, confidence={confidence}")
+    agent = get_agent_for_intent(intent)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"No agent configured for intent '{intent}'")
+
+    # ── Step 2: resolve + authorize agent_team_code ───────────────────────────
+    effective_team_code = (request.agent_team_code or settings.AGENT_TEAM_CODE or "").strip() or None
+    effective_team_code = validate_agent_access(current_user, effective_team_code)
 
     # ── STEP 2: Create job and return job_id ────────────────────────────────
     api_job_id = job_manager.create_job(
-        query=query,
+        query=message,
         bearer_token=request.bearer_token,
         owner_id=current_user.id,
     )
@@ -79,10 +93,10 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
         api_job_id, 
         status="QUEUED",
         result={
-            "agent_code": agent_code,
-            "agent_name": agent_name,
+            "agent_id": agent_id,
+            "intent": intent,
             "confidence": confidence,
-            "version": agent_version,
+            "agent_team_code": effective_team_code,
         }
     )
 
@@ -92,36 +106,44 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     db = SessionLocal()
     try:
         log_entry = PromptLog(
-            query=query,
+            query=message,
             endpoint="/api/chat",
-            agent_id=agent_code,
-            intent=agent_name,
+            agent_id=agent_id,
+            intent=intent,
             confidence=str(confidence)
         )
         db.add(log_entry)
         db.commit()
-        logger.info(f"Prompt logged to database: agent={agent_code}")
+        logger.info(f"Prompt logged to database: agent={agent_id}")
     except Exception as e:
         logger.error(f"Failed to log to database: {e}")
         db.rollback()
     finally:
         db.close()
 
-    # ── STEP 4: Invoke Oracle agent asynchronously ──────────────────────────
-    await invoke_oracle_agent(
-        query=query,
-        intent=agent_name,
-        confidence=confidence,
-        agent_id=agent_code,
-        bearer_token=request.bearer_token,
-        job_id=api_job_id,
-        version=agent_version,
-    )
+    # ── Step 4: Invoke agent asynchronously (mock or Oracle) ─────────────────
+    if settings.MOCK_MODE:
+        response = await get_mock_response(agent_id, intent, confidence, message)
+        job_manager.update_job(
+            api_job_id,
+            status="COMPLETE",
+            result=response.dict() if hasattr(response, "dict") else response,
+        )
+    else:
+        await invoke_oracle_agent(
+            query=message,
+            intent=intent,
+            confidence=confidence,
+            agent_id=agent_id,
+            bearer_token=request.bearer_token,
+            job_id=api_job_id,
+            agent_team_code=effective_team_code,
+        )
 
     return JobResponse(
         job_id=api_job_id,
         status="QUEUED",
-        message=f"Routed to {agent_name}. Poll with GET /api/chat/{api_job_id}",
+        message=f"Request queued. Poll with GET /api/chat/{api_job_id}",
     )
 
 

@@ -4,8 +4,8 @@ the structured ChatResponse schema the frontend expects.
 """
 
 import logging
-from models.chat import ChatResponse, KPI, ChartData, ChartDataset
-from services.agent_registry import get_agent
+from Backend.models.chat import ChatResponse, KPI, ChartData, ChartDataset
+from Backend.services.agent_registry import get_agent
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +28,7 @@ async def format_oracle_response(
 
     # Safe string conversion and stripping
     if isinstance(oracle_output, dict):
-        oracle_output_str = "" # We will handle dict below
-        oracle_output_stripped = ""
-    else:
-        oracle_output_str = str(oracle_output)
-        oracle_output_stripped = oracle_output_str.strip()
-
-    # Empty check
-    if not oracle_output and not isinstance(oracle_output, dict):
-    # Safe string conversion and stripping
-    if isinstance(oracle_output, dict):
-        oracle_output_str = "" # We will handle dict below
+        oracle_output_str = ""  # handled below
         oracle_output_stripped = ""
     else:
         oracle_output_str = str(oracle_output)
@@ -155,10 +145,6 @@ async def format_oracle_response(
         agent_name=agent.name if agent else agent_id,
         narrative=narrative,
         html=html,
-        kpis=kpis,
-        columns=columns,
-        rows=rows,
-        charts=charts,
         kpis=kpis,
         columns=columns,
         rows=rows,

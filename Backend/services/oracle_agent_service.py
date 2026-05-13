@@ -7,17 +7,14 @@ Implements the async invoke-then-poll pattern:
 
 import asyncio
 import logging
+
 import httpx
-from config import get_settings
-from utils.oauth import get_oracle_token, get_basic_auth_header
-from services.response_formatter import format_oracle_response
-from models.chat import ChatResponse
-from utils import job_manager
-from config import get_settings
-from utils.oauth import get_oracle_token, get_basic_auth_header
-from services.response_formatter import format_oracle_response
-from models.chat import ChatResponse
-from utils import job_manager
+
+from Backend.config import get_settings
+from Backend.models.chat import ChatResponse
+from Backend.services.response_formatter import format_oracle_response
+from Backend.utils import job_manager
+from Backend.utils.oauth import get_basic_auth_header, get_oracle_token
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +26,16 @@ REQUEST_TIMEOUT = 60.0
 _job_state = {}
 
 
-async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None, version: int = None) -> ChatResponse:
+async def invoke_oracle_agent(
+    query: str,
+    intent: str,
+    confidence: float,
+    agent_id: str,
+    bearer_token: str | None = None,
+    job_id: str | None = None,
+    version: int | None = None,
+    agent_team_code: str | None = None,
+) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
     For the new async flow:
@@ -41,7 +47,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         query: User query
         intent: Classified intent
         confidence: Classification confidence
-        agent_id: Target agent ID (NOW DYNAMIC - receives Oracle Agent Team Code like "ARCREDITAGENTTEAM")
+        agent_id: Target internal agent id (e.g. \"ar\", \"finance\")
+        agent_team_code: Oracle AI Agent Studio team code (e.g. \"ARCREDITAGENTTEAM\")
         bearer_token: Authentication token (required)
         job_id: API job_id (from job_manager)
         version: Agent team version (optional, falls back to settings)
@@ -52,9 +59,22 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
     agent_version = version if version is not None else settings.AGENT_TEAM_VERSION
     
     # Construct base URL from settings
-    host = settings.FUSION_HOST.replace('https://', '').replace('http://', '').rstrip('/')
-    # CHANGED: Use agent_id parameter instead of settings.AGENT_TEAM_CODE for dynamic routing
-    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{agent_id}"
+    host = settings.FUSION_HOST.replace("https://", "").replace("http://", "").rstrip("/")
+
+    team_code = (agent_team_code or settings.AGENT_TEAM_CODE or "").strip()
+    if not team_code:
+        job_manager.update_job(
+            job_id,
+            status="ERROR",
+            error="No agent_team_code provided and no AGENT_TEAM_CODE fallback configured.",
+        )
+        return ChatResponse(
+            success=False,
+            fallback=True,
+            message="No agent team configured.",
+        )
+
+    base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{team_code}"
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -129,7 +149,6 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 message=f"Could not reach Oracle Fusion: {str(e)}",
             )
 
-        if invoke_response.status_code not in (200, 202):
         if invoke_response.status_code not in (200, 202):
             logger.error(f"[{job_id}] Oracle invoke failed: {invoke_response.status_code} — {invoke_response.text}")
             logger.error(f"[{job_id}] Response headers: {invoke_response.headers}")
@@ -362,7 +381,6 @@ async def _poll_oracle_async(
                 job_manager.update_job(
                     api_job_id,
                     status="ERROR",
-                    error=friendly_error,
                     error=friendly_error,
                 )
                 return

@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
-from config import get_settings
+from Backend.config import get_settings
 
 settings = get_settings()
 
@@ -37,7 +37,7 @@ import Backend.models.authorization  # noqa: F401
 # Create tables
 try:
     # Import here to avoid circular dependency with db.Base
-    from models.agent_registry import AgentRegistry
+    from Backend.models.agent_registry import AgentRegistry
     Base.metadata.create_all(bind=engine)
 except Exception as e:
     print(f"WARNING: Could not connect to database or create tables: {e}")

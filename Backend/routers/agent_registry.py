@@ -10,9 +10,9 @@ from typing import Optional
 from datetime import datetime, timezone
 import logging
 
-from db import get_db
-from models.agent_registry import AgentRegistry
-from config import get_settings
+from Backend.db import get_db
+from Backend.models.agent_registry import AgentRegistry
+from Backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/agent-registry", tags=["agent-registry"])
 class AgentRegisterRequest(BaseModel):
     team_code: str = Field(..., description="Oracle AI Agent Team Code (e.g., ARCREDITAGENTTEAM)")
     team_name: str = Field(..., description="Human-readable name")
-    description: str = Field(..., description="Detailed description of what this agent handles - used by Ollama for routing")
+    description: str = Field(..., description="Detailed description of what this agent handles")
     version: int = Field(default=1, description="Agent team version")
     owner_team: Optional[str] = Field(None, description="Team that owns this agent")
     owner_email: Optional[str] = Field(None, description="Contact email")
@@ -104,7 +104,7 @@ async def list_agents(
 ):
     """
     Get all registered agent teams.
-    Used by Ollama router to fetch available agents.
+    Used to fetch available registered agents.
     """
     
     query = db.query(AgentRegistry)
