@@ -3,7 +3,7 @@ Agent Registry — single source of truth for all available agents.
 Maps agent IDs to their metadata and intent list.
 """
 
-from Backend.models.agent import AgentConfig
+from models.agent import AgentConfig
 
 AGENTS: list[AgentConfig] = [
     AgentConfig(

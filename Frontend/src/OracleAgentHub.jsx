@@ -186,7 +186,7 @@ const MOCK_RESPONSES = {
 };
 
 // ─── Backend API call ─────────────────────────────────────────────────────────
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "http://localhost:8000";
 
 // ── New Async API Flow ──────────────────────────────────────────────────────────
 // POST /api/chat returns {job_id, status: "QUEUED"}
@@ -298,10 +298,22 @@ async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "
 
   } catch (err) {
     console.error("Backend call failed:", err);
+    
+    // Distinguish between Oracle agent errors and connection errors
+    let userMessage;
+    if (err.message.startsWith("Job failed:")) {
+      // This is an Oracle agent error — show the agent's message directly
+      userMessage = err.message.replace("Job failed: ", "");
+    } else if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+      userMessage = `Cannot reach the backend server at ${BACKEND_URL}. Please make sure it is running.`;
+    } else {
+      userMessage = `${err.message}. Make sure the backend is running at ${BACKEND_URL} and you provided a valid bearer token.`;
+    }
+    
     return {
       success: false,
       fallback: true,
-      message: `Backend error: ${err.message}. Make sure the backend is running at ${BACKEND_URL} and you provided a valid bearer token.`,
+      message: userMessage,
     };
   }
 }
@@ -555,11 +567,12 @@ function DataTable({ columns, rows }) {
 }
 
 function NarrativeText({ text }) {
+  if (!text) return null;
   const parts = text.split(/\*\*(.*?)\*\*/g);
   return (
-    <p style={{ fontSize: "13px", color: T.slate, lineHeight: 1.65, marginBottom: "12px" }}>
+    <div style={{ fontSize: "13px", color: T.slate, lineHeight: 1.65, marginBottom: "12px", whiteSpace: "pre-wrap" }}>
       {parts.map((p, i) => i % 2 === 1 ? <strong key={i} style={{ color: T.navy, fontWeight: 600 }}>{p}</strong> : p)}
-    </p>
+    </div>
   );
 }
 
@@ -690,11 +703,12 @@ function MessageBubble({ msg, agents, onFollowUp }) {
               <ConfidenceMeter value={msg.confidence} />
             </div>
           )}
-          {msg.html ? (
+          {msg.html && (
             <div style={{ fontSize: '13px', color: T.slate, lineHeight: 1.65, marginBottom: '12px' }} dangerouslySetInnerHTML={{ __html: msg.html }} />
-          ) : msg.narrative ? (
+          )}
+          {msg.narrative && (
             <NarrativeText text={msg.narrative} />
-          ) : null}
+          )}
           {msg.kpis && <KPIGrid kpis={msg.kpis} />}
           {msg.columns && msg.rows && <DataTable columns={msg.columns} rows={msg.rows} />}
           {msg.charts && msg.charts.length > 0 && (
@@ -976,7 +990,7 @@ export default function OracleAgentHub() {
       setMessages(prev => [...prev, {
         id: uuid(), role: "system", time: new Date(),
         agentId: result.agentId, intent: result.intent, confidence: result.confidence,
-        narrative: result.narrative, kpis: result.kpis,
+        narrative: result.narrative, html: result.html, kpis: result.kpis,
         columns: result.columns, rows: result.rows,
         charts: result.charts,
         followUps: result.followUps,

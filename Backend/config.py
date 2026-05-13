@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     AGENT_TEAM_VERSION: int = 1
 
     # ── Database ───────────────────────────────────────────────────────
-    DB_HOST: str = "localhost"
+    DB_HOST: str = "172.16.132.100"
     DB_PORT: int = 5432
     DB_NAME: str = "oasisdb"
     DB_USER: str = "oasis_user"
