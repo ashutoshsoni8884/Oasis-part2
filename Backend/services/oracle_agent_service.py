@@ -9,17 +9,16 @@ import asyncio
 import logging
 
 import httpx
-
-from Backend.config import get_settings
-from Backend.models.chat import ChatResponse
-from Backend.services.response_formatter import format_oracle_response
-from Backend.utils import job_manager
-from Backend.utils.oauth import get_basic_auth_header, get_oracle_token
+from config import get_settings
+from utils.oauth import get_oracle_token, get_basic_auth_header
+from services.response_formatter import format_oracle_response
+from models.chat import ChatResponse
+from utils import job_manager
 
 logger = logging.getLogger(__name__)
 
-MAX_POLL_ATTEMPTS = 300  # 300 * 1 second = 5 minutes
-POLL_INTERVAL_SECONDS = 1
+MAX_POLL_ATTEMPTS = 600  # 600 * 0.5 second = 5 minutes
+POLL_INTERVAL_SECONDS = 0.5
 REQUEST_TIMEOUT = 60.0
 
 # Mapping of api_job_id -> {oracle_job_id, headers, intent, confidence, agent_id}
@@ -121,7 +120,6 @@ async def invoke_oracle_agent(
         "parameters": {},
         "conversationId": None,
         "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
-        "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
     }
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -129,7 +127,6 @@ async def invoke_oracle_agent(
         logger.info(f"[{job_id}] Invoking Oracle agent: {agent_id} with query: {query[:80]}...")
 
         try:
-            logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
             logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
             invoke_response = await client.post(
                 f"{base_url}/invokeAsync",
@@ -177,16 +174,6 @@ async def invoke_oracle_agent(
                 fallback=True,
                 message="Failed to parse Oracle response.",
             )
-
-        # DEBUG: Log full invoke response
-        import json as _json
-        logger.info(f"[{job_id}] ===== INVOKE RESPONSE (HTTP {invoke_response.status_code}) =====")
-        logger.info(f"[{job_id}] {_json.dumps(invoke_data, indent=2, default=str)}")
-        try:
-            with open("debug_invoke_response.json", "w") as _f:
-                _json.dump(invoke_data, _f, indent=2, default=str)
-        except Exception:
-            pass
 
         # DEBUG: Log full invoke response
         import json as _json
@@ -250,6 +237,8 @@ async def invoke_oracle_agent(
         )
 
 
+_completed_jobs = set()
+
 async def _poll_oracle_async(
     api_job_id: str,
     oracle_job_id: str,
@@ -259,19 +248,13 @@ async def _poll_oracle_async(
     confidence: float,
     agent_id: str,
 ) -> None:
-    """
-    Background task: Poll Oracle Fusion for job completion.
-    Updates job_manager with status and results.
+    """Background task: Poll Oracle Fusion for job completion."""
     
-    Args:
-        api_job_id: The job_id returned to the client
-        oracle_job_id: The Oracle Fusion job ID
-        base_url: Oracle API base URL
-        headers: Request headers with auth
-        intent: Classified intent
-        confidence: Classification confidence
-        agent_id: Agent ID
-    """
+    # Check if this job was already completed
+    if api_job_id in _completed_jobs:
+        logger.info(f"[{api_job_id}] Job already completed, skipping")
+        return
+    
     logger.info(f"[{api_job_id}] Starting background polling for Oracle job {oracle_job_id}")
     
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -297,34 +280,19 @@ async def _poll_oracle_async(
                 logger.warning(f"[{api_job_id}] Failed to parse poll response: {e}")
                 continue
 
-            # DEBUG: Log full poll response
-            import json as _json
-            logger.info(f"[{api_job_id}] ===== POLL RESPONSE (HTTP {status_response.status_code}) =====")
-            logger.info(f"[{api_job_id}] {_json.dumps(status_data, indent=2, default=str)}")
-            try:
-                with open("debug_poll_response.json", "w") as _f:
-                    _json.dump(status_data, _f, indent=2, default=str)
-            except Exception:
-                pass
-
-            # DEBUG: Log full poll response
-            import json as _json
-            logger.info(f"[{api_job_id}] ===== POLL RESPONSE (HTTP {status_response.status_code}) =====")
-            logger.info(f"[{api_job_id}] {_json.dumps(status_data, indent=2, default=str)}")
-            try:
-                with open("debug_poll_response.json", "w") as _f:
-                    _json.dump(status_data, _f, indent=2, default=str)
-            except Exception:
-                pass
-                
             status = status_data.get("status", "").upper()
 
-            logger.info(f"[{api_job_id}] Poll {attempt + 1}/{MAX_POLL_ATTEMPTS}: status={status}")
-
             if status == "COMPLETE":
+                # Prevent duplicate processing
+                if api_job_id in _completed_jobs:
+                    logger.info(f"[{api_job_id}] Job already processed, skipping duplicate")
+                    return
+                
+                _completed_jobs.add(api_job_id)
+                
                 # Parse and format the Oracle response
                 oracle_output = status_data.get("output", "")
-                result = await format_oracle_response(
+                result = format_oracle_response(
                     oracle_output=oracle_output,
                     intent=intent,
                     confidence=confidence,
@@ -350,7 +318,7 @@ async def _poll_oracle_async(
                 # If there's partial output despite the error, try to use it
                 if oracle_output:
                     logger.info(f"[{api_job_id}] Oracle agent returned partial output despite error")
-                    result = await format_oracle_response(
+                    result = format_oracle_response(
                         oracle_output=oracle_output,
                         intent=intent,
                         confidence=confidence,

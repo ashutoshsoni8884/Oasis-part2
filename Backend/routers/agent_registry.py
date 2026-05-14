@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 
 from Backend.db import get_db
@@ -67,7 +67,7 @@ async def register_agent(
         existing.version = request.version
         existing.owner_team = request.owner_team
         existing.owner_email = request.owner_email
-        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_at = datetime.utcnow()
         db.commit()
         
         logger.info(f"Updated agent: {request.team_code}")

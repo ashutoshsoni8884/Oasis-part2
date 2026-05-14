@@ -319,9 +319,7 @@ const BACKEND_URL = "http://localhost:8000";
 // POST /api/chat returns {job_id, status: "QUEUED"}
 // GET /api/chat/{job_id} returns {job_id, status, result} when complete
 
-async function submitChatJob(queryText, sessionId, history = [], bearerToken = "", jwtToken = "") {
-  // Step 1: Submit the query and get a job_id.
-  // Returns {job_id, status} or throws error.
+async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
   try {
     const headers = { "Content-Type": "application/json" };
     if (jwtToken) {
@@ -338,7 +336,7 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
           role: m.role,
           text: m.text || m.narrative || "",
         })),
-        bearer_token: bearerToken,  // Required for real Oracle auth
+        bearer_token: bearerToken,
       }),
     });
 
@@ -350,7 +348,7 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
     const data = await res.json();
     return {
       job_id: data.job_id,
-      status: data.status,  // "QUEUED"
+      status: data.status,
       message: data.message,
     };
   } catch (err) {
@@ -359,11 +357,9 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
   }
 }
 
-async function pollChatJob(jobId, jwtToken = "", maxWaitMs = 300000) {
-  // Step 2: Poll for job completion.
-  // Returns result when status == "COMPLETE", throws error on timeout or ERROR status.
+async function pollChatJob(jobId, maxWaitMs = 300000) {
   const startTime = Date.now();
-  const pollInterval = 1000;  // Poll every 1 second
+  const pollInterval = 1000;
 
   while (Date.now() - startTime < maxWaitMs) {
     try {
@@ -385,7 +381,6 @@ async function pollChatJob(jobId, jwtToken = "", maxWaitMs = 300000) {
       console.log(`[${jobId}] Poll status: ${data.status}`);
 
       if (data.status === "COMPLETE" && data.result) {
-        // Map snake_case to camelCase
         const result = data.result;
         return {
           success: result.success,
@@ -409,7 +404,6 @@ async function pollChatJob(jobId, jwtToken = "", maxWaitMs = 300000) {
         throw new Error(`Job failed: ${data.error || "Unknown error"}`);
       }
 
-      // Still processing, wait and retry
       await new Promise(r => setTimeout(r, pollInterval));
 
     } catch (err) {
@@ -422,31 +416,26 @@ async function pollChatJob(jobId, jwtToken = "", maxWaitMs = 300000) {
   throw new Error(`Job polling timed out after ${maxWaitMs / 1000} seconds`);
 }
 
-async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "", jwtToken = "") {
-  // Complete async flow: submit job, then poll until complete.
+async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "") {
   try {
-    // Step 1: Submit job
-    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken, jwtToken);
+    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken);
     console.log(`Job submitted: ${submitResp.job_id}`);
 
-    // Step 2: Poll for result
-    const result = await pollChatJob(submitResp.job_id, jwtToken);
+    const result = await pollChatJob(submitResp.job_id);
     return result;
 
   } catch (err) {
     console.error("Backend call failed:", err);
-    
-    // Distinguish between Oracle agent errors and connection errors
+
     let userMessage;
     if (err.message.startsWith("Job failed:")) {
-      // This is an Oracle agent error — show the agent's message directly
       userMessage = err.message.replace("Job failed: ", "");
     } else if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
       userMessage = `Cannot reach the backend server at ${BACKEND_URL}. Please make sure it is running.`;
     } else {
       userMessage = `${err.message}. Make sure the backend is running at ${BACKEND_URL} and you provided a valid bearer token.`;
     }
-    
+
     return {
       success: false,
       fallback: true,
@@ -454,57 +443,6 @@ async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "
     };
   }
 }
-
-// ── Commented out: Old sync API ────────────────────────────────────────────────
-/*
-async function callRouterAPI(queryText, sessionId, history = []) {
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: queryText,
-        session_id: sessionId,
-        history: history.slice(-6).map(m => ({
-          role: m.role,
-          text: m.text || m.narrative || "",
-        })),
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Backend error: HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-
-    // Map snake_case backend fields to camelCase for the frontend
-    return {
-      success: data.success,
-      fallback: data.fallback || false,
-      message: data.message,
-      intent: data.intent,
-      confidence: data.confidence,
-      agentId: data.agent_id,
-      agentName: data.agent_name,
-      narrative: data.narrative,
-      html: data.html,
-      kpis: data.kpis,
-      columns: data.columns,
-      rows: data.rows,
-      charts: data.charts,
-      followUps: data.follow_ups,
-    };
-  } catch (err) {
-    console.error("Backend call failed:", err);
-    return {
-      success: false,
-      fallback: true,
-      message: `Could not reach the backend server. Make sure it's running at ${BACKEND_URL}. Error: ${err.message}`,
-    };
-  }
-}
-*/
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
 function statusMeta(val) {
@@ -548,19 +486,17 @@ function InlineChart({ chart }) {
       <div style={{ marginBottom: "12px" }}>
         <div style={{ fontSize: "11px", fontWeight: 600, color: T.navyMid, marginBottom: "6px" }}>{title}</div>
         <svg width={W} height={H} style={{ overflow: "visible" }}>
-          {/* Y-axis gridlines */}
           {[0, 0.25, 0.5, 0.75, 1].map(f => {
             const y = pad.top + innerH * (1 - f);
             return (
               <g key={f}>
                 <line x1={pad.left} x2={pad.left + innerW} y1={y} y2={y} stroke={T.border} strokeWidth="1" />
                 <text x={pad.left - 4} y={y + 3} textAnchor="end" fontSize="8" fill={T.muted}>
-                  {f === 1 ? (maxVal >= 1000 ? `${(maxVal/1000).toFixed(0)}k` : maxVal) : ""}
+                  {f === 1 ? (maxVal >= 1000 ? `${(maxVal / 1000).toFixed(0)}k` : maxVal) : ""}
                 </text>
               </g>
             );
           })}
-          {/* Bars */}
           {labels.map((lbl, gi) => (
             datasets.map((ds, si) => {
               const val = ds.data[gi] ?? 0;
@@ -573,21 +509,19 @@ function InlineChart({ chart }) {
                   <rect x={x} y={y} width={barW - 2} height={bh} fill={color} rx="2" opacity="0.88" />
                   {bh > 14 && (
                     <text x={x + (barW - 2) / 2} y={y - 3} textAnchor="middle" fontSize="7" fill={T.slate}>
-                      {val >= 1000 ? `${(val/1000).toFixed(0)}k` : val}
+                      {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}
                     </text>
                   )}
                 </g>
               );
             })
           ))}
-          {/* X labels */}
           {labels.map((lbl, gi) => (
             <text key={gi} x={pad.left + gi * groupW + groupW / 2} y={pad.top + innerH + 14}
               textAnchor="middle" fontSize="8" fill={T.slate}>
               {lbl.length > 10 ? lbl.slice(0, 9) + "…" : lbl}
             </text>
           ))}
-          {/* Legend */}
           {nSeries > 1 && datasets.map((ds, si) => (
             <g key={si} transform={`translate(${pad.left + si * 80}, ${H - 10})`}>
               <rect width="8" height="8" fill={ds.color || CHART_COLORS[si]} rx="1" />
@@ -840,12 +774,23 @@ function MessageBubble({ msg, agents, onFollowUp }) {
               <ConfidenceMeter value={msg.confidence} />
             </div>
           )}
-          {msg.html && (
-            <div style={{ fontSize: '13px', color: T.slate, lineHeight: 1.65, marginBottom: '12px' }} dangerouslySetInnerHTML={{ __html: msg.html }} />
-          )}
-          {msg.narrative && (
+          {/* UPDATED: Display HTML content with proper table styling */}
+          {(msg.html || (msg.narrative && (msg.narrative.includes('</table>') || msg.narrative.includes('<table')))) ? (
+            <div
+              className="oracle-html-response"
+              style={{
+                fontSize: '13px',
+                color: T.slate,
+                lineHeight: 1.65,
+                marginBottom: '12px',
+                overflowX: 'auto',
+                width: '100%'
+              }}
+              dangerouslySetInnerHTML={{ __html: msg.html || msg.narrative }}
+            />
+          ) : msg.narrative ? (
             <NarrativeText text={msg.narrative} />
-          )}
+          ) : null}
           {msg.kpis && <KPIGrid kpis={msg.kpis} />}
           {msg.columns && msg.rows && <DataTable columns={msg.columns} rows={msg.rows} />}
           {msg.charts && msg.charts.length > 0 && (
@@ -980,7 +925,7 @@ function QueryInputBar({ onSubmit, disabled, suggestions }) {
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ user, onSignOut, themeKey, onThemeChange }) {
+function Header({ user }) {
   return (
     <div style={{ height: "54px", background: T.navy, display: "flex", alignItems: "center", padding: "0 20px", gap: "12px", flexShrink: 0, borderBottom: `3px solid ${T.oracle}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
@@ -1117,8 +1062,7 @@ export default function OracleAgentHub() {
   const [activeAgentId, setActiveAgentId] = useState(null);
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
-  const [bearerToken, setBearerToken] = useState(sessionStorage.getItem("bearerToken") || "");  // Session-scoped token persistence
-  const [themeKey, setThemeKey] = useState(() => localStorage.getItem("hubTheme") || "light");
+  const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");
   const chatRef = useRef(null);
   const { token, user: authUser, signOut } = useAuth();
 
@@ -1178,6 +1122,14 @@ export default function OracleAgentHub() {
   async function handleQuery(queryText) {
     if (loading) return;
 
+    if (!bearerToken.trim()) {
+      setMessages(prev => [...prev, {
+        id: uuid(), role: "system", fallback: true, time: new Date(),
+        text: "⚠️  Bearer token required. Please enter your Oracle Fusion authentication token in the input field above.",
+      }]);
+      return;
+    }
+
     const userMsg = { id: uuid(), role: "user", text: queryText, time: new Date(), userName: user.name };
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
@@ -1188,8 +1140,7 @@ export default function OracleAgentHub() {
     await new Promise(r => setTimeout(r, 400));
     setRouterStage(2);
 
-    // NEW: Pass bearerToken and auth token to callRouterAPI
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken, token);
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
@@ -1201,14 +1152,24 @@ export default function OracleAgentHub() {
       setLastConf(result.confidence);
       setActiveAgentId(result.agentId);
       setConfList(prev => [...prev, result.confidence]);
-      setMessages(prev => [...prev, {
-        id: uuid(), role: "system", time: new Date(),
-        agentId: result.agentId, intent: result.intent, confidence: result.confidence,
-        narrative: result.narrative, html: result.html, kpis: result.kpis,
-        columns: result.columns, rows: result.rows,
-        charts: result.charts,
-        followUps: result.followUps,
-      }]);
+
+      // Prevent duplicate messages
+      setMessages(prev => {
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.narrative === result.narrative && lastMsg.agentId === result.agentId) {
+          console.warn("Duplicate message detected, skipping");
+          return prev;
+        }
+
+        return [...prev, {
+          id: uuid(), role: "system", time: new Date(),
+          agentId: result.agentId, intent: result.intent, confidence: result.confidence,
+          narrative: result.narrative, html: result.html, kpis: result.kpis,
+          columns: result.columns, rows: result.rows,
+          charts: result.charts,
+          followUps: result.followUps,
+        }];
+      });
     } else {
       setMessages(prev => [...prev, {
         id: uuid(), role: "system", fallback: true, time: new Date(),
@@ -1231,13 +1192,56 @@ export default function OracleAgentHub() {
         ::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 10px; }
         @keyframes pulse { 0%,80%,100%{opacity:0.25;transform:scale(0.8)} 40%{opacity:1;transform:scale(1)} }
         @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        
+        /* Styles for HTML tables from Oracle agents */
+        .oracle-html-response table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        .oracle-html-response th {
+            text-align: left;
+            padding: 10px 12px;
+            border: 1px solid #e2e8f0;
+            background-color: #f5f5f5;
+            font-weight: 600;
+            color: #1A2B4A;
+        }
+        .oracle-html-response td {
+            text-align: left;
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            color: #4A5568;
+        }
+        .oracle-html-response tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        .oracle-html-response tr:hover {
+            background-color: #f0f4f8;
+        }
+        .oracle-html-response td:last-child,
+        .oracle-html-response td:nth-last-child(2) {
+            text-align: right;
+        }
+        .oracle-html-response {
+            overflow-x: auto;
+            width: 100%;
+        }
+        .oracle-html-response span[style*="font-weight:600"] {
+            display: block;
+            margin-top: 12px;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
       `}</style>
 
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: T.bg, minHeight: "500px" }}>
         <Header user={user} onSignOut={signOut} themeKey={themeKey} onThemeChange={setThemeKey} />
         <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
-        
-        {/* NEW: Bearer Token Input Section */}
+
+        {/* Bearer Token Input Section */}
         <div style={{ background: T.white, borderBottom: `1px solid ${T.border}`, padding: "12px 20px", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
@@ -1250,7 +1254,7 @@ export default function OracleAgentHub() {
                 value={bearerToken}
                 onChange={(e) => {
                   setBearerToken(e.target.value);
-                  sessionStorage.setItem("bearerToken", e.target.value);  // Persist only for current tab session
+                  localStorage.setItem("bearerToken", e.target.value);
                 }}
                 disabled={loading}
                 style={{

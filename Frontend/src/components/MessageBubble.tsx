@@ -12,7 +12,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           ? 'bg-sky-600 text-white rounded-br-none' 
           : 'bg-white border border-gray-200 rounded-bl-none shadow-sm'
       }`}>
-        <p className="text-[15px] leading-relaxed">{message.content}</p>
+        {isUser ? (
+          <p className="text-[15px] leading-relaxed">{message.content}</p>
+        ) : (
+          <div 
+            className="text-[15px] leading-relaxed prose prose-sm max-w-none" 
+            dangerouslySetInnerHTML={{ __html: message.content }} 
+          />
+        )}
       </div>
     </div>
   );
