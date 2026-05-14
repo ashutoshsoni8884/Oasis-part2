@@ -4,7 +4,7 @@ Stores job state during polling until completion or timeout.
 """
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
 
@@ -32,7 +32,7 @@ def create_job(query: str, bearer_token: Optional[str] = None) -> str:
         job_id (uuid string)
     """
     job_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     
     _jobs[job_id] = {
         "status": "QUEUED",
@@ -64,7 +64,7 @@ def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
     job = _jobs[job_id]
     
     # Check if job has expired
-    if datetime.now(timezone.utc) > job["expires_at"]:
+    if datetime.utcnow() > job["expires_at"]:
         logger.warning(f"Job {job_id} has expired")
         return None
     
@@ -170,7 +170,7 @@ def cleanup_expired_jobs() -> int:
     Returns:
         Number of jobs cleaned up
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     expired_ids = [
         jid for jid, job in _jobs.items()
         if (now - job["created_at"]).total_seconds() > MAX_JOB_AGE_SECONDS
