@@ -6,10 +6,8 @@ Ollama Router - Fetches agents from database and routes queries
 import httpx
 import asyncio
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
-from db import SessionLocal
-from models.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -24,52 +22,36 @@ CACHE_TTL_SECONDS = 60  # Refresh every minute
 
 async def fetch_agents_from_database() -> list:
     """
-    Fetch all active agents from the database directly.
+    Fetch all active agents from the database via internal API call.
     Uses caching to avoid database hits on every request.
     """
     global _cache
     
-    now = datetime.now(timezone.utc)
-    
     # Return cached data if still fresh
-    if _cache["agents"] and _cache["expiry"] and now < _cache["expiry"]:
+    if _cache["agents"] and _cache["expiry"] and datetime.utcnow() < _cache["expiry"]:
         logger.debug(f"Using cached agents: {len(_cache['agents'])} agents")
         return _cache["agents"]
     
-    # Fetch from database directly
-    try:
-        db = SessionLocal()
+    # Fetch from database via internal API
+    async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            agents = db.query(AgentRegistry).filter(AgentRegistry.is_active == True).all()
+            response = await client.get("http://localhost:8000/api/agent-registry/list")
+            response.raise_for_status()
+            data = response.json()
             
-            # Convert to list of dicts to match expected format
-            agent_list = [
-                {
-                    "team_code": agent.team_code,
-                    "team_name": agent.team_name,
-                    "description": agent.description,
-                    "version": agent.version,
-                    "is_active": agent.is_active
-                }
-                for agent in agents
-            ]
+            _cache["agents"] = data["agents"]
+            _cache["expiry"] = datetime.utcnow() + timedelta(seconds=CACHE_TTL_SECONDS)
             
-            _cache["agents"] = agent_list
-            _cache["expiry"] = now + timedelta(seconds=CACHE_TTL_SECONDS)
-            
-            logger.info(f"Fetched {len(agent_list)} agents from database")
-            return agent_list
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"Failed to fetch agents from database: {e}")
-        # Return cached data if available, even if expired
-        if _cache["agents"]:
-            logger.warning(f"Using stale cache with {len(_cache['agents'])} agents")
+            logger.info(f"Fetched {len(_cache['agents'])} agents from database")
             return _cache["agents"]
-        return []
-
+            
+        except httpx.RequestError as e:
+            logger.error(f"Failed to fetch agents from database: {e}")
+            # Return cached data if available, even if expired
+            if _cache["agents"]:
+                logger.warning(f"Using stale cache with {len(_cache['agents'])} agents")
+                return _cache["agents"]
+            return []
 
 
 def build_routing_prompt(user_query: str, agents: list) -> str:
@@ -130,7 +112,6 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
         {
             "agent_code": "ARCREDITAGENTTEAM" or None,
             "agent_name": "Credit Management Agent" or None,
-            "version": 4 or None,
             "confidence": 0.95,
             "reasoning": "..."
         }
@@ -144,7 +125,6 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
         return {
             "agent_code": None,
             "agent_name": None,
-            "version": None,
             "confidence": 0.0,
             "reasoning": "No agents registered in database. Please register agent teams via /api/agent-registry/register"
         }
@@ -173,7 +153,6 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
                 return {
                     "agent_code": None,
                     "agent_name": None,
-                    "version": None,
                     "confidence": 0.0,
                     "reasoning": f"Ollama service error: HTTP {response.status_code}"
                 }
@@ -194,15 +173,14 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
                 return {
                     "agent_code": selected_code,
                     "agent_name": agent["team_name"] if agent else selected_code,
-                    "version": agent["version"] if agent else None,
                     "confidence": 0.95,
-                    "reasoning": f"Successfully routed to {selected_code}"
+                    "reasoning": f"Successfully routed to {selected_code}",
+                    "version": agent.get("version") if agent else None
                 }
             elif selected_code == "UNKNOWN":
                 return {
                     "agent_code": None,
                     "agent_name": None,
-                    "version": None,
                     "confidence": 0.0,
                     "reasoning": "Ollama determined no agent matches this query"
                 }
@@ -212,7 +190,6 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
                 return {
                     "agent_code": None,
                     "agent_name": None,
-                    "version": None,
                     "confidence": 0.0,
                     "reasoning": f"Invalid agent code returned: {selected_code}"
                 }
@@ -235,15 +212,14 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
             return {
                 "agent_code": selected_agent["team_code"],
                 "agent_name": selected_agent["team_name"],
-                "version": selected_agent["version"],
                 "confidence": 0.7,
-                "reasoning": "Routed via keyword-based fallback (Ollama unavailable)"
+                "reasoning": "Routed via keyword-based fallback (Ollama unavailable)",
+                "version": selected_agent.get("version")
             }
         
         return {
             "agent_code": None,
             "agent_name": None,
-            "version": None,
             "confidence": 0.0,
             "reasoning": "Ollama service not available and no keywords matched. Please start Ollama with 'ollama serve'"
         }
@@ -252,7 +228,6 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
         return {
             "agent_code": None,
             "agent_name": None,
-            "version": None,
             "confidence": 0.0,
             "reasoning": f"Routing error: {str(e)}"
         }
