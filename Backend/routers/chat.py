@@ -58,59 +58,64 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
         }
     )
 
-    # ── Step 1: routing via Gemini ────────────────────────────────────────────
+    # ── Step 1: routing via Ollama + database-backed agent registry ─────────
     try:
-        agent_team_code = await intent_classifier.classify_intent(message)
+        classification = await intent_classifier.classify_intent(message)
     except Exception as e:
         logger.error({"event": "intent_classification_failed", "request_id": request_id, "error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to classify query intent")
 
-    # ── Step 2: resolve + authorize agent_team_code ───────────────────────────
+    agent_team_code = classification.get("agent_team_code")
+    agent_name = classification.get("agent_name")
+    confidence = classification.get("confidence", 0.0)
+    reasoning = classification.get("reasoning", "")
+
     if request.agent_team_code:
         effective_team_code = validate_agent_access(current_user, request.agent_team_code)
     else:
+        if not agent_team_code:
+            raise HTTPException(status_code=400, detail=reasoning or "Could not confidently match your query to an agent.")
         effective_team_code = validate_agent_access(current_user, agent_team_code)
 
-    # ── STEP 2: Create job and return job_id ────────────────────────────────
     api_job_id = job_manager.create_job(
         query=message,
         bearer_token=request.bearer_token,
         owner_id=current_user.id,
     )
     
-    # Store routing info for later
     job_manager.update_job(
-        api_job_id, 
+        api_job_id,
         status="QUEUED",
         result={
             "agent_team_code": effective_team_code,
+            "agent_name": agent_name,
+            "confidence": confidence,
+            "reasoning": reasoning,
         }
     )
 
     logger.info(f"Job created: {api_job_id}")
 
-    # ── STEP 3: Log to database ─────────────────────────────────────────────
     db = SessionLocal()
     try:
         log_entry = PromptLog(
             query=message,
             endpoint="/api/chat",
-            agent_id=agent_id,
-            intent=intent,
+            agent_id=effective_team_code,
+            intent=agent_name or "",
             confidence=str(confidence)
         )
         db.add(log_entry)
         db.commit()
-        logger.info(f"Prompt logged to database: agent={agent_id}")
+        logger.info(f"Prompt logged to database: agent={effective_team_code}")
     except Exception as e:
         logger.error(f"Failed to log to database: {e}")
         db.rollback()
     finally:
         db.close()
 
-    # ── Step 4: Invoke agent asynchronously (mock or Oracle) ─────────────────
     if settings.MOCK_MODE:
-        response = await get_mock_response(agent_id, intent, confidence, message)
+        response = await get_mock_response(effective_team_code, agent_name or "", confidence, message)
         job_manager.update_job(
             api_job_id,
             status="COMPLETE",
@@ -119,9 +124,9 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
     else:
         await invoke_oracle_agent(
             query=message,
-            intent=intent,
+            intent=agent_name or "",
             confidence=confidence,
-            agent_id=agent_id,
+            agent_id=effective_team_code,
             bearer_token=request.bearer_token,
             job_id=api_job_id,
             agent_team_code=effective_team_code,

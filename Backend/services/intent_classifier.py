@@ -1,44 +1,27 @@
 """
-Intent Classifier — selects the Oracle AI Agent Studio team using Gemini.
+Intent Classifier — selects the Oracle AI Agent Studio team using Ollama.
 
-This module uses Google Gemini to classify user intents and route to the
-appropriate agent_team_code based on the query content.
+This module routes user queries to the correct agent team code by
+fetching active agents from the database and asking Ollama to choose.
 """
 
 import logging
-import google.generativeai as genai
-from config import settings
+from services.ollama_router import route_to_agent
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=settings.GEMINI_API_KEY)
 
-
-async def classify_intent(message: str) -> str:
+async def classify_intent(message: str) -> dict:
     """
-    Classify the user's message using Gemini and return the agent_team_code.
-
-    Uses a simple prompt to route to available agents.
+    Classify the user's message and return a routing payload.
     """
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        Analyze this user query and determine the most appropriate Oracle Fusion agent team code.
-        Available teams: ARCREDITAGENTTEAM (for credit analysis), or other teams as needed.
+    route = await route_to_agent(message)
 
-        Query: {message}
-
-        Return only the agent team code (e.g., ARCREDITAGENTTEAM).
-        """
-        response = model.generate_content(prompt)
-        agent_team_code = response.text.strip()
-
-        logger.info(f"Gemini classified '{message}' as agent_team_code: {agent_team_code}")
-        return agent_team_code
-
-    except Exception as e:
-        logger.error(f"Gemini classification failed: {e}")
-        # Fallback to default
-        return "ARCREDITAGENTTEAM"
+    return {
+        "agent_team_code": route.get("agent_code"),
+        "agent_name": route.get("agent_name"),
+        "confidence": float(route.get("confidence", 0.0) or 0.0),
+        "reasoning": route.get("reasoning", ""),
+        "version": route.get("version"),
+    }
 
