@@ -5,8 +5,8 @@ import os
 # Add the parent directory to sys.path to import from app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Backend.db import SessionLocal
-from Backend.models.agent_registry import AgentRegistry
+from db import SessionLocal
+from models.agent_registry import AgentRegistry
 
 def update_agent_versions():
     # Target versions

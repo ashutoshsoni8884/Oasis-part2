@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
 
-from Backend.db import Base
+from db import Base
 
 
 class User(Base):

@@ -3,10 +3,10 @@ import secrets
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
-from Backend.config import get_settings
-from Backend.models.authorization import AuditLog, Permission, RefreshToken, Role, RolePermission, UserRole
-from Backend.models.user import User
-from Backend.utils.security import get_password_hash, verify_password
+from config import get_settings
+from models.authorization import AuditLog, Permission, RefreshToken, Role, RolePermission, UserRole
+from models.user import User
+from utils.security import get_password_hash, verify_password
 
 logger = logging.getLogger(__name__)
 

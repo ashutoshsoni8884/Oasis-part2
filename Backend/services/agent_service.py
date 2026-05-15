@@ -16,8 +16,8 @@ from typing import Iterable, List, Set
 
 from fastapi import HTTPException, status
 
-from Backend.config import get_settings
-from Backend.models.user import User
+from config import get_settings
+from models.user import User
 
 
 def _split_csv(value: str | None) -> List[str]:

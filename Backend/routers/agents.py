@@ -8,9 +8,9 @@ GET /api/agents
 
 from fastapi import APIRouter, Depends
 
-from Backend.models.user import User
-from Backend.services.agent_service import get_allowed_agents, get_agent_config
-from Backend.utils.security import get_current_user
+from models.user import User
+from services.agent_service import get_allowed_agents, get_agent_config
+from utils.security import get_current_user
 
 router = APIRouter(prefix="/api", tags=["agents"])
 

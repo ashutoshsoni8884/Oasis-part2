@@ -5,7 +5,7 @@ Database model for agent registry - stores all Oracle AI Agent Teams
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean
 from datetime import datetime
-from Backend.db import Base
+from db import Base
 
 class AgentRegistry(Base):
     __tablename__ = "agent_registry"

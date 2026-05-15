@@ -7,17 +7,16 @@ import logging
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 
-from Backend.config import get_settings
-from Backend.db import PromptLog, SessionLocal
-from Backend.models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
-from Backend.models.user import User
-from Backend.services import intent_classifier
-from Backend.services.agent_registry import get_agent_for_intent
-from Backend.services.agent_service import validate_agent_access
-from Backend.services.mock_agent_service import get_mock_response
-from Backend.services.oracle_agent_service import invoke_oracle_agent
-from Backend.utils import job_manager
-from Backend.utils.security import get_current_user
+from config import get_settings
+from db import PromptLog, SessionLocal
+from models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
+from models.user import User
+from services import intent_classifier
+from services.agent_service import validate_agent_access
+from services.mock_agent_service import get_mock_response
+from services.oracle_agent_service import invoke_oracle_agent
+from utils import job_manager
+from utils.security import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -59,27 +58,18 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
         }
     )
 
-    # ── Step 1: intent classification ─────────────────────────────────────────
+    # ── Step 1: routing via Gemini ────────────────────────────────────────────
     try:
-        classification = await intent_classifier.classify(message, request.history)
+        agent_team_code = await intent_classifier.classify_intent(message)
     except Exception as e:
         logger.error({"event": "intent_classification_failed", "request_id": request_id, "error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to classify query intent")
 
-    intent = classification["intent"]
-    agent_id = classification["agent_id"]
-    confidence = classification["confidence"]
-
-    if intent == "UNKNOWN" or not agent_id:
-        raise HTTPException(status_code=400, detail="Could not confidently match your query to an agent.")
-
-    agent = get_agent_for_intent(intent)
-    if not agent:
-        raise HTTPException(status_code=404, detail=f"No agent configured for intent '{intent}'")
-
     # ── Step 2: resolve + authorize agent_team_code ───────────────────────────
-    effective_team_code = (request.agent_team_code or settings.AGENT_TEAM_CODE or "").strip() or None
-    effective_team_code = validate_agent_access(current_user, effective_team_code)
+    if request.agent_team_code:
+        effective_team_code = validate_agent_access(current_user, request.agent_team_code)
+    else:
+        effective_team_code = validate_agent_access(current_user, agent_team_code)
 
     # ── STEP 2: Create job and return job_id ────────────────────────────────
     api_job_id = job_manager.create_job(
@@ -93,9 +83,6 @@ async def chat_submit(request: ChatRequest, current_user: User = Depends(get_cur
         api_job_id, 
         status="QUEUED",
         result={
-            "agent_id": agent_id,
-            "intent": intent,
-            "confidence": confidence,
             "agent_team_code": effective_team_code,
         }
     )

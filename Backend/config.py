@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ── Google Gemini ───────────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
 
-    # ── Oracle Fusion Cloud ─────────────────────────────────────────────
+     # ── Oracle Fusion Cloud ─────────────────────────────────────────────
     FUSION_HOST: str = ""
     FUSION_USER: str = ""
     FUSION_PASSWORD: str = ""
@@ -79,3 +79,6 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+# Compatibility alias for modules that still import `settings`
+settings = get_settings()

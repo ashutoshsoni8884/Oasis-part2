@@ -11,9 +11,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from Backend.config import get_settings
-from Backend.db import SessionLocal
-from Backend.models.user import User
+from config import get_settings
+from db import SessionLocal
+from models.user import User
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()

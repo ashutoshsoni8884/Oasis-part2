@@ -14,6 +14,16 @@ This document explains the project structure, each file's purpose, and how backe
   - Unused text file. Likely scratch or placeholder content.
 - `practics.py`
   - Local Python file; appearance suggests practice or experiment code. Not part of the main app flow.
+- `temp_frontend_check.py`
+  - Script to check if the frontend server is running on port 5173.
+- `temp_health_check.py`
+  - Script to check if the backend health endpoint is responding on port 8000.
+- `tmp_test.txt`
+  - Temporary test file, likely for debugging or scratch notes.
+- `debug_invoke_response.json`
+  - Sample JSON response from Oracle Fusion invoke API for debugging.
+- `debug_poll_response.json`
+  - Sample JSON response from Oracle Fusion polling API for debugging.
 
 ## Backend/
 
@@ -25,7 +35,9 @@ The `Backend` folder contains the FastAPI server, database setup, request models
   - Starts the FastAPI application.
   - Loads settings from `Backend/config.py`.
   - Configures CORS to allow the React frontend at local development origins.
+  - Registers the auth router from `Backend/routers/auth.py`.
   - Registers the chat router from `Backend/routers/chat.py`.
+  - Registers placeholder routers for agents and agent_registry.
   - Provides a `/api/health` endpoint for health checks.
 
 ### Backend configuration
@@ -62,8 +74,25 @@ The `Backend` folder contains the FastAPI server, database setup, request models
     - Returns job status, completed results, or error details.
 
 - `Backend/routers/auth.py`
-  - Empty file in this repo.
-  - Placeholder for future authentication-related router logic.
+  - Defines authentication endpoints under `/api/auth`.
+  - `POST /api/auth/login`
+    - Accepts username and password, returns JWT access and refresh tokens.
+    - Validates credentials using `Backend/services/auth_service.py`.
+    - Creates audit log entry for login events.
+  - `POST /api/auth/refresh`
+    - Accepts refresh token, returns new access token.
+    - Validates refresh token expiry and revokes old token.
+  - `POST /api/auth/register`
+    - Accepts username, email, password to create new user account.
+    - Hashes password and stores user in database.
+  - `POST /api/auth/logout`
+    - Accepts refresh token and revokes it to log out user.
+
+- `Backend/routers/agents.py`
+  - Placeholder router for agent management endpoints (currently empty).
+
+- `Backend/routers/agent_registry.py`
+  - Placeholder router for agent registry management (currently empty).
 
 ### Models
 
@@ -82,8 +111,20 @@ The `Backend` folder contains the FastAPI server, database setup, request models
   - Placeholder for future role-based or permission modeling.
 
 - `Backend/models/user.py`
-  - Empty in this repository.
-  - Placeholder for future user model definitions.
+  - Defines the User SQLAlchemy model and Pydantic schemas.
+  - User model includes id, username, email, password_hash, is_active, created_at.
+  - UserCreate and UserRead schemas for API operations.
+
+- `Backend/models/auth.py`
+  - Defines authentication-related Pydantic schemas.
+  - Token, TokenPayload for JWT handling.
+  - LoginRequest, RegisterRequest, RefreshTokenRequest, LogoutRequest for API payloads.
+
+- `Backend/models/authorization.py`
+  - Defines role-based access control models.
+  - Role, Permission, UserRole, RolePermission for RBAC.
+  - RefreshToken for managing refresh token lifecycle.
+  - AuditLog for tracking user actions and authentication events.
 
 ### Services
 
@@ -116,9 +157,39 @@ The `Backend` folder contains the FastAPI server, database setup, request models
   - Attaches generated follow-up suggestions based on the classified intent.
   - Normalizes fields such as `agent_name`, `narrative`, `html`, and `follow_ups`.
 
-- `Backend/services/mock_agent_service.py`
-  - Not read directly, but likely contains local mock response logic.
-  - In this repo, real Oracle mode is active and mock mode is commented out.
+- `Backend/services/auth_service.py`
+  - Implements authentication and authorization business logic.
+  - User management: get_user_by_username, get_user_by_email, create_user.
+  - Authentication: authenticate_user with password verification.
+  - Token management: create_refresh_token, get_refresh_token, revoke_refresh_token.
+  - Audit logging: create_audit_log for tracking user actions.
+
+- `Backend/services/token_service.py`
+  - Placeholder service for token-related operations (currently empty).
+
+### Test Files
+
+- `Backend/test_chat.py`
+  - Simple test script to send a POST request to `/api/chat` endpoint.
+  - Uses httpx for async HTTP requests.
+  - Tests basic chat functionality with dummy token.
+
+- `Backend/test_queries.py`
+  - Test script for multiple chat queries.
+  - Tests various invoice and subscription related queries.
+  - Uses httpx with longer timeout for async requests.
+
+### Other Backend Files
+
+- `Backend/modify_service.py`
+  - Appears to be a utility script for modifying service configurations.
+  - Contains regex operations, possibly for text processing or config updates.
+
+- `Backend/debug_invoke_response.json`
+  - Sample JSON response from Oracle Fusion invoke API call.
+
+- `Backend/debug_poll_response.json`
+  - Sample JSON response from Oracle Fusion polling API call.
 
 ### Utilities
 
@@ -182,6 +253,29 @@ The `Frontend` folder contains the React + Vite UI layer that calls the backend 
     - Presents agent conversation output, follow-ups, KPIs, tables, and charts.
   - Also includes mock intent patterns and fallback UI logic in case the backend is unavailable.
 
+### Frontend API Layer
+
+- `Frontend/src/api/auth.js`
+  - API client functions for authentication.
+  - login() and register() functions that call backend `/api/auth/login` and `/api/auth/register`.
+  - Handles HTTP requests with proper error handling.
+
+### Frontend Authentication Components
+
+- `Frontend/src/auth/AuthContext.jsx`
+  - React context provider for authentication state management.
+  - Manages user token, user data, and loading states.
+  - Provides signIn and signUp functions that call auth API.
+  - Persists authentication data in sessionStorage.
+
+- `Frontend/src/auth/Login.jsx`
+  - Login form component.
+  - Collects username and password, calls AuthContext signIn.
+
+- `Frontend/src/auth/Signup.jsx`
+  - Registration form component.
+  - Collects username, email, password, calls AuthContext signUp.
+
 ### Frontend UI components
 
 These files are small reusable components that support UI rendering.
@@ -211,16 +305,20 @@ These files are small reusable components that support UI rendering.
 
 ## Notes about current repo contents
 
-- `Backend/routers/auth.py`, `Backend/models/role.py`, and `Backend/models/user.py` are currently empty.
-- The project is configured for live Oracle Fusion / Gemini integration, but it still contains fallback/mock patterns.
-- `Frontend/src/OracleAgentHub.jsx` includes a small mock router and intent detection logic used for local UI demonstration and error handling.
+- `Backend/routers/agents.py` and `Backend/routers/agent_registry.py` are currently empty placeholders.
+- The project now includes a complete authentication system with JWT tokens, user registration, login/logout, and role-based access control.
+- Database models include users, roles, permissions, refresh tokens, and audit logs for security tracking.
+- The backend uses SQLAlchemy for database operations with proper session management.
+- Test scripts are provided for validating chat API functionality.
+- Debug JSON files contain sample responses from Oracle Fusion APIs for development reference.
+- The frontend includes authentication UI components with React context for state management.
 - The backend uses an in-memory job store (`Backend/utils/job_manager.py`), so job state is ephemeral and resets when the backend restarts.
 
 ## Summary of file grouping
 
-- `Backend/`: FastAPI app, config, database, model schemas, agent logic, Oracle service, async job management.
-- `Frontend/`: React + Vite UI, app bootstrap, main agent hub UI, optional reusable components.
-- Root files: repo metadata, dependency lists, and README documentation.
+- `Backend/`: FastAPI app, config, database, model schemas, agent logic, Oracle service, authentication, authorization, async job management, test scripts.
+- `Frontend/`: React + Vite UI, app bootstrap, main agent hub UI, authentication components, reusable components.
+- Root files: repo metadata, dependency lists, README documentation, health check scripts, debug files.
 
 ## Recommended next steps
 

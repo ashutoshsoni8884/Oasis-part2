@@ -10,9 +10,9 @@ from typing import Optional
 from datetime import datetime
 import logging
 
-from Backend.db import get_db
-from Backend.models.agent_registry import AgentRegistry
-from Backend.config import get_settings
+from db import get_db
+from models.agent_registry import AgentRegistry
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 

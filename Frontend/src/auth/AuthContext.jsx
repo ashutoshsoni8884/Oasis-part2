@@ -53,6 +53,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     sessionStorage.removeItem("appToken");
     sessionStorage.removeItem("appUser");
+    localStorage.removeItem("bearerToken");
   };
 
   return (

@@ -319,11 +319,11 @@ const BACKEND_URL = "http://localhost:8000";
 // POST /api/chat returns {job_id, status: "QUEUED"}
 // GET /api/chat/{job_id} returns {job_id, status, result} when complete
 
-async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
+async function submitChatJob(queryText, sessionId, history = [], bearerToken = "", authToken = "") {
   try {
     const headers = { "Content-Type": "application/json" };
-    if (jwtToken) {
-      headers["Authorization"] = `Bearer ${jwtToken}`;
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
     }
 
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
@@ -357,15 +357,15 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
   }
 }
 
-async function pollChatJob(jobId, maxWaitMs = 300000) {
+async function pollChatJob(jobId, maxWaitMs = 300000, authToken = "") {
   const startTime = Date.now();
   const pollInterval = 1000;
 
   while (Date.now() - startTime < maxWaitMs) {
     try {
       const headers = { "Content-Type": "application/json" };
-      if (jwtToken) {
-        headers["Authorization"] = `Bearer ${jwtToken}`;
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
       }
 
       const res = await fetch(`${BACKEND_URL}/api/chat/${jobId}`, {
@@ -416,12 +416,12 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
   throw new Error(`Job polling timed out after ${maxWaitMs / 1000} seconds`);
 }
 
-async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "") {
+async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "", authToken = "") {
   try {
-    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken);
+    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken, authToken);
     console.log(`Job submitted: ${submitResp.job_id}`);
 
-    const result = await pollChatJob(submitResp.job_id);
+    const result = await pollChatJob(submitResp.job_id, undefined, authToken);
     return result;
 
   } catch (err) {
@@ -925,7 +925,7 @@ function QueryInputBar({ onSubmit, disabled, suggestions }) {
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ user }) {
+function Header({ user, onSignOut, themeKey, onThemeChange }) {
   return (
     <div style={{ height: "54px", background: T.navy, display: "flex", alignItems: "center", padding: "0 20px", gap: "12px", flexShrink: 0, borderBottom: `3px solid ${T.oracle}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
@@ -1063,6 +1063,7 @@ export default function OracleAgentHub() {
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
   const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");
+  const [themeKey, setThemeKey] = useState(() => localStorage.getItem("hubTheme") || "light");
   const chatRef = useRef(null);
   const { token, user: authUser, signOut } = useAuth();
 
@@ -1140,7 +1141,7 @@ export default function OracleAgentHub() {
     await new Promise(r => setTimeout(r, 400));
     setRouterStage(2);
 
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken);
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken, token);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
