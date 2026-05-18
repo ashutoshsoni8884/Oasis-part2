@@ -161,7 +161,7 @@ async def route_to_agent(user_query: str) -> Dict[str, Any]:
             raw_response = result["response"]
             selected_code = raw_response.strip().upper()
             
-            print(f"DEBUG: Ollama raw response: '{raw_response}'")
+            logger.debug(f"Ollama raw response: '{raw_response}'")
             logger.info(f"Ollama selected: {selected_code}")
             
             # Step 4: Validate the response against database agents

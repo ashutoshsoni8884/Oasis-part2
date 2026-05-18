@@ -69,6 +69,12 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
+    # ── Logging Configuration ───────────────────────────────────────────
+    ENABLE_DB_LOGGING: bool = True
+    ENABLE_FILE_LOGGING: bool = True
+    LOG_LEVEL: str = "INFO"
+    LOG_MAX_BODY_SIZE: int = 10000  # Max size for request/response body logging (bytes)
+
     model_config = {
         "env_file": str(BASE_DIR / ".env"),
         "env_file_encoding": "utf-8",

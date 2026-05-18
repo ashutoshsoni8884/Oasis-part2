@@ -14,6 +14,7 @@ from utils.oauth import get_oracle_token, get_basic_auth_header
 from services.response_formatter import format_oracle_response
 from models.chat import ChatResponse
 from utils import job_manager
+from services.logging_service import log_application_step
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ async def invoke_oracle_agent(
     job_id: str | None = None,
     version: int | None = None,
     agent_team_code: str | None = None,
+    request_id: str | None = None,
 ) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
@@ -74,6 +76,24 @@ async def invoke_oracle_agent(
         )
 
     base_url = f"https://{host}/api/fusion-ai/orchestrator/agent/v2/{team_code}"
+    invoke_url = f"{base_url}/invokeAsync"
+
+    # Log the resolved base_url and full invoke URL for troubleshooting and verification
+    try:
+        if request_id:
+            await log_application_step(
+                request_id,
+                "INFO",
+                "oracle_base_url_resolved",
+                "Resolved Oracle base_url",
+                {"base_url": base_url, "team_code": team_code, "invoke_url": invoke_url}
+            )
+        else:
+            logger.info(f"[job:{job_id}] Resolved Oracle base_url: {base_url}")
+            logger.info(f"[job:{job_id}] Oracle invoke URL: {invoke_url}")
+    except Exception as e:
+        # Don't fail the flow if logging fails
+        logger.warning(f"Failed to log base_url resolution: {e}")
     
     # Use provided bearer token if available, otherwise try OAuth, then Basic Auth
     if bearer_token:
@@ -82,6 +102,11 @@ async def invoke_oracle_agent(
             "Content-Type": "application/json",
         }
         logger.info(f"[{job_id}] Using provided bearer token for authentication")
+        try:
+            if request_id:
+                await log_application_step(request_id, "INFO", "auth", "Using provided bearer token", None)
+        except Exception:
+            pass
     else:
         token = await get_oracle_token()
         
@@ -91,6 +116,11 @@ async def invoke_oracle_agent(
                 "Content-Type": "application/json",
             }
             logger.info(f"[{job_id}] Using OAuth token for authentication")
+            try:
+                if request_id:
+                    await log_application_step(request_id, "INFO", "auth", "Using OAuth token", None)
+            except Exception:
+                pass
         else:
             # Fallback to Basic Auth with user/pass
             basic_header = get_basic_auth_header()
@@ -110,6 +140,11 @@ async def invoke_oracle_agent(
                 "Content-Type": "application/json",
             }
             logger.info(f"[{job_id}] Using Basic Auth header (user: {settings.FUSION_USER})")
+            try:
+                if request_id:
+                    await log_application_step(request_id, "INFO", "auth", "Using basic auth", {"user": settings.FUSION_USER})
+            except Exception:
+                pass
 
     invoke_payload = {
         "message": query,
@@ -127,9 +162,9 @@ async def invoke_oracle_agent(
         logger.info(f"[{job_id}] Invoking Oracle agent: {agent_id} with query: {query[:80]}...")
 
         try:
-            logger.info(f"[{job_id}] HITTING URL EXACTLY: '{base_url}/invokeAsync'")
+            logger.info(f"[{job_id}] HITTING URL EXACTLY: '{invoke_url}'")
             invoke_response = await client.post(
-                f"{base_url}/invokeAsync",
+                invoke_url,
                 json=invoke_payload,
                 headers=headers,
             )
@@ -216,7 +251,7 @@ async def invoke_oracle_agent(
         # Update job status to RUNNING
         job_manager.update_job(job_id, status="RUNNING")
         
-        # Start background polling task
+        # Start background polling task (pass request_id for correlated logs)
         asyncio.create_task(
             _poll_oracle_async(
                 api_job_id=job_id,
@@ -226,6 +261,7 @@ async def invoke_oracle_agent(
                 intent=intent,
                 confidence=confidence,
                 agent_id=agent_id,
+                request_id=request_id,
             )
         )
         
@@ -247,6 +283,7 @@ async def _poll_oracle_async(
     intent: str,
     confidence: float,
     agent_id: str,
+    request_id: str | None = None,
 ) -> None:
     """Background task: Poll Oracle Fusion for job completion."""
     
@@ -256,6 +293,11 @@ async def _poll_oracle_async(
         return
     
     logger.info(f"[{api_job_id}] Starting background polling for Oracle job {oracle_job_id}")
+    try:
+        if request_id:
+            await log_application_step(request_id, "INFO", "oracle_poll_start", "Starting background poll", {"oracle_job_id": oracle_job_id})
+    except Exception:
+        pass
     
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         for attempt in range(MAX_POLL_ATTEMPTS):
@@ -307,6 +349,11 @@ async def _poll_oracle_async(
                 )
                 
                 logger.info(f"[{api_job_id}] Oracle job {oracle_job_id} completed successfully")
+                try:
+                    if request_id:
+                        await log_application_step(request_id, "INFO", "oracle_poll_complete", "Oracle job completed", {"oracle_job_id": oracle_job_id})
+                except Exception:
+                    pass
                 return
 
             elif status == "ERROR":
@@ -351,6 +398,11 @@ async def _poll_oracle_async(
                     status="ERROR",
                     error=friendly_error,
                 )
+                try:
+                    if request_id:
+                        await log_application_step(request_id, "ERROR", "oracle_poll_error", "Oracle job returned error", {"oracle_job_id": oracle_job_id, "raw_error": raw_error})
+                except Exception:
+                    pass
                 return
 
             elif status in ("RUNNING", "WAITING"):
@@ -366,3 +418,8 @@ async def _poll_oracle_async(
             status="ERROR",
             error=f"Oracle agent timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS} seconds"
         )
+        try:
+            if request_id:
+                await log_application_step(request_id, "ERROR", "oracle_poll_timeout", "Oracle job polling timed out", {"oracle_job_id": oracle_job_id})
+        except Exception:
+            pass

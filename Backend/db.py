@@ -40,7 +40,8 @@ import models.authorization  # noqa: F401
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
-    print(f"WARNING: Could not connect to database or create tables: {e}")
+    import logging
+    logging.getLogger("oasis").warning(f"Could not connect to database or create tables: {e}")
 
 
 def get_db():

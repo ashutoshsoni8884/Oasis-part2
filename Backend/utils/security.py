@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -93,3 +93,37 @@ async def get_current_user(
             detail="Inactive user",
         )
     return user
+
+
+async def get_current_user_optional(
+    request: Request,
+) -> User | None:
+    """
+    Get current user if authenticated from the Authorization header.
+    Returns None for missing, invalid, or expired tokens.
+    """
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.lower().startswith("bearer "):
+        return None
+
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+
+    try:
+        payload = decode_access_token(token)
+        username = payload.get("sub")
+        if not username:
+            return None
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.username == username).first()
+            if not user or not user.is_active:
+                return None
+            return user
+        finally:
+            db.close()
+    except Exception:
+        # Any auth failure returns None - don't break logging
+        return None
