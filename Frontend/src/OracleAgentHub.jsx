@@ -188,6 +188,27 @@ const MOCK_RESPONSES = {
 // ─── Backend API call ─────────────────────────────────────────────────────────
 const BACKEND_URL = "http://localhost:8000";
 
+async function authRequest(path, body) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload.detail || payload.message || `HTTP ${res.status}`);
+  }
+  return payload;
+}
+
+async function loginUser(credentials) {
+  return authRequest("/api/auth/login", credentials);
+}
+
+async function registerUser(credentials) {
+  return authRequest("/api/auth/register", credentials);
+}
+
 // ── New Async API Flow ──────────────────────────────────────────────────────────
 // POST /api/chat returns {job_id, status: "QUEUED"}
 // GET /api/chat/{job_id} returns {job_id, status, result} when complete
@@ -308,6 +329,113 @@ async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "
 }
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
+function makeInitials(name) {
+  if (!name) return "U";
+  const parts = name.trim().split(" ");
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function AuthPanel({ mode, onModeChange, onLogin, onSignUp, loading, error }) {
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!username.trim() || !password) return;
+    if (mode === "login") {
+      onLogin({ username: username.trim(), password });
+      return;
+    }
+    if (!email.trim()) return;
+    onSignUp({ username: username.trim(), email: email.trim(), password });
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: T.bg, padding: "40px 20px" }}>
+      <div style={{ width: "100%", maxWidth: "420px", background: T.white, borderRadius: T.radiusLg, boxShadow: T.shadowMd, padding: "30px 28px", border: `1px solid ${T.border}` }}>
+        <div style={{ marginBottom: "24px" }}>
+          <div style={{ fontSize: "22px", fontWeight: 700, color: T.navy, marginBottom: "8px" }}>
+            {mode === "login" ? "Sign in to Oracle Agent Hub" : "Create a new user account"}
+          </div>
+          <div style={{ fontSize: "13px", color: T.slate, lineHeight: 1.6 }}>
+            {mode === "login"
+              ? "Sign in to continue."
+              : "Welcome aboard! Create a new account to start routing queries through the Oracle Agent Hub."}
+          </div>
+        </div>
+
+        {error ? (
+          <div style={{ marginBottom: "16px", color: T.danger, fontSize: "13px", fontWeight: 600, background: T.dangerBg, padding: "12px 14px", borderRadius: T.radius }}>
+            {error}
+          </div>
+        ) : null}
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ display: "grid", gap: "14px" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "11px", color: T.muted, fontWeight: 600 }}>
+              Username or email
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={loading}
+                placeholder="Username or email"
+                style={{ width: "100%", padding: "11px 14px", borderRadius: T.radius, border: `1px solid ${T.border}`, fontSize: "13px", outline: "none", background: T.bg }}
+              />
+            </label>
+
+            {mode === "signup" && (
+              <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "11px", color: T.muted, fontWeight: 600 }}>
+                Email address
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  placeholder="your@email.com"
+                  style={{ width: "100%", padding: "11px 14px", borderRadius: T.radius, border: `1px solid ${T.border}`, fontSize: "13px", outline: "none", background: T.bg }}
+                />
+              </label>
+            )}
+
+            <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "11px", color: T.muted, fontWeight: 600 }}>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                placeholder="••••••••"
+                style={{ width: "100%", padding: "11px 14px", borderRadius: T.radius, border: `1px solid ${T.border}`, fontSize: "13px", outline: "none", background: T.bg }}
+              />
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !username.trim() || !password || (mode === "signup" && !email.trim())}
+            style={{ width: "100%", marginTop: "20px", padding: "12px 14px", borderRadius: T.radiusMd, border: "none", background: loading ? T.border : T.oracle, color: T.white, fontSize: "14px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}
+          >
+            {loading ? (mode === "signup" ? "Creating account…" : "Signing in…") : (mode === "signup" ? "Create account" : "Sign in")}
+          </button>
+        </form>
+
+        <div style={{ marginTop: "18px", fontSize: "12px", textAlign: "center", color: T.muted }}>
+          {mode === "login" ? (
+            <>
+              New user? <button type="button" onClick={() => onModeChange("signup")} style={{ color: T.oracle, fontWeight: 700, border: "none", background: "transparent", cursor: "pointer" }}>Sign up</button>
+            </>
+          ) : (
+            <>
+              Already registered? <button type="button" onClick={() => onModeChange("login")} style={{ color: T.oracle, fontWeight: 700, border: "none", background: "transparent", cursor: "pointer" }}>Sign in</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function statusMeta(val) {
   const v = (val || "").toLowerCase();
   if (v.includes("overdue") || v.includes("at risk") || v.includes("critical"))
@@ -767,7 +895,7 @@ function QueryInputBar({ onSubmit, disabled, suggestions }) {
 }
 
 // ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ user }) {
+function Header({ user, onSignOut }) {
   return (
     <div style={{ height: "54px", background: T.navy, display: "flex", alignItems: "center", padding: "0 20px", gap: "12px", flexShrink: 0, borderBottom: `3px solid ${T.oracle}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
@@ -791,6 +919,9 @@ function Header({ user }) {
           </div>
           <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.75)", fontWeight: 500 }}>{user.name}</span>
         </div>
+        <button onClick={onSignOut} style={{ padding: "8px 12px", background: "rgba(255,255,255,0.08)", border: `1px solid rgba(255,255,255,0.18)`, borderRadius: "999px", color: T.white, cursor: "pointer", fontSize: "11px", fontWeight: 700 }}>
+          Sign out
+        </button>
       </div>
     </div>
   );
@@ -875,9 +1006,22 @@ export default function OracleAgentHub() {
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
   const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");
+  const [authUser, setAuthUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("authUser") || "null");
+    } catch {
+      return null;
+    }
+  });
+  const [authToken, setAuthToken] = useState(localStorage.getItem("authToken") || "");
+  const [authMode, setAuthMode] = useState("login");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const chatRef = useRef(null);
 
-  const user = { name: "Ashutosh soni", initials: "AS", id: "AS@splcg.com" };
+  const user = authUser
+    ? { name: authUser.username, initials: makeInitials(authUser.username), id: authUser.email }
+    : { name: "Guest", initials: "G", id: "guest" };
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" }); }, 80);
@@ -896,6 +1040,49 @@ export default function OracleAgentHub() {
     "Generate ageing report Q1",
     "Compare Q1 vs Q2 margins",
   ].slice(0, 2);
+
+  const handleSignIn = async ({ username, password }) => {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const result = await loginUser({ username, password });
+      const userData = { user_id: result.user_id, username: result.username, email: result.email };
+      localStorage.setItem("authUser", JSON.stringify(userData));
+      localStorage.setItem("authToken", result.access_token);
+      setAuthUser(userData);
+      setAuthToken(result.access_token);
+      setAuthMode("login");
+    } catch (err) {
+      setAuthError(err.message || "Unable to sign in. Please verify your credentials.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignUp = async ({ username, email, password }) => {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const result = await registerUser({ username, email, password });
+      const userData = { user_id: result.user_id, username: result.username, email: result.email };
+      localStorage.setItem("authUser", JSON.stringify(userData));
+      localStorage.setItem("authToken", result.access_token);
+      setAuthUser(userData);
+      setAuthToken(result.access_token);
+      setAuthMode("login");
+    } catch (err) {
+      setAuthError(err.message || "Unable to create account. Please try a different username or email.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = () => {
+    setAuthUser(null);
+    setAuthToken("");
+    localStorage.removeItem("authUser");
+    localStorage.removeItem("authToken");
+  };
 
   async function handleQuery(queryText) {
     if (loading) return;
@@ -1016,70 +1203,86 @@ export default function OracleAgentHub() {
       `}</style>
 
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'DM Sans', sans-serif", background: T.bg, minHeight: "500px" }}>
-        <Header user={user} />
-        <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
+        {!authUser ? (
+          <AuthPanel
+            mode={authMode}
+            onModeChange={(mode) => {
+              setAuthMode(mode);
+              setAuthError("");
+            }}
+            onLogin={handleSignIn}
+            onSignUp={handleSignUp}
+            loading={authLoading}
+            error={authError}
+          />
+        ) : (
+          <>
+            <Header user={user} onSignOut={handleSignOut} />
+            <RouterStatusBar stage={routerStage} intent={lastIntent} agentName={lastAgent} confidence={lastConf} isIdle={messages.length === 0 && !loading} />
 
-        {/* Bearer Token Input Section */}
-        <div style={{ background: T.white, borderBottom: `1px solid ${T.border}`, padding: "12px 20px", flexShrink: 0 }}>
-          <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ fontSize: "11px", fontWeight: 600, color: T.muted, textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
-                🔐 Oracle Bearer Token (Required)
-              </label>
-              <input
-                type="password"
-                placeholder="Paste your Oracle Fusion bearer token here..."
-                value={bearerToken}
-                onChange={(e) => {
-                  setBearerToken(e.target.value);
-                  localStorage.setItem("bearerToken", e.target.value);
-                }}
-                disabled={loading}
-                style={{
-                  width: "100%",
-                  padding: "8px 12px",
-                  fontSize: "12px",
-                  border: `1px solid ${bearerToken ? T.success : T.warning}`,
-                  borderRadius: T.radius,
-                  fontFamily: "monospace",
-                  background: bearerToken ? "#F0FDF4" : "#FFFBEB",
-                  color: T.navy,
-                  transition: "all 0.2s",
-                }}
-              />
-              <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
-                {bearerToken ? "✓ Token loaded" : "⚠️  Paste your token to submit queries"}
+            {/* Bearer Token Input Section */}
+            <div style={{ background: T.white, borderBottom: `1px solid ${T.border}`, padding: "12px 20px", flexShrink: 0 }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "11px", fontWeight: 600, color: T.muted, textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
+                    🔐 Oracle Bearer Token (Required)
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Paste your Oracle Fusion bearer token here..."
+                    value={bearerToken}
+                    onChange={(e) => {
+                      setBearerToken(e.target.value);
+                      localStorage.setItem("bearerToken", e.target.value);
+                    }}
+                    disabled={loading}
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      border: `1px solid ${bearerToken ? T.success : T.warning}`,
+                      borderRadius: T.radius,
+                      fontFamily: "monospace",
+                      background: bearerToken ? "#F0FDF4" : "#FFFBEB",
+                      color: T.navy,
+                      transition: "all 0.2s",
+                    }}
+                  />
+                  <div style={{ fontSize: "10px", color: T.muted, marginTop: "4px" }}>
+                    {bearerToken ? "✓ Token loaded" : "⚠️  Paste your token to submit queries"}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <AgentPanel agents={AGENTS} activeAgentId={activeAgentId} stats={sessionStats} />
+            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+              <AgentPanel agents={AGENTS} activeAgentId={activeAgentId} stats={sessionStats} />
 
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: T.bg }}>
-            {messages.length === 0 && !loading ? (
-              <WelcomeScreen onExampleClick={handleQuery} />
-            ) : (
-              <div ref={chatRef} style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-                {messages.map(msg => (
-                  <div key={msg.id} style={{ animation: "fadeIn 0.25s ease" }}>
-                    <MessageBubble msg={msg} agents={AGENTS} onFollowUp={handleQuery} />
-                  </div>
-                ))}
-                {loading && (
-                  <div style={{ display: "flex", gap: "10px", alignItems: "flex-start", animation: "fadeIn 0.2s ease" }}>
-                    <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: T.oracleLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", flexShrink: 0 }}>🤖</div>
-                    <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: `2px ${T.radiusMd} ${T.radiusMd} ${T.radiusMd}`, padding: "12px 16px", boxShadow: T.shadow }}>
-                      <TypingIndicator />
-                    </div>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: T.bg }}>
+                {messages.length === 0 && !loading ? (
+                  <WelcomeScreen onExampleClick={handleQuery} />
+                ) : (
+                  <div ref={chatRef} style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+                    {messages.map(msg => (
+                      <div key={msg.id} style={{ animation: "fadeIn 0.25s ease" }}>
+                        <MessageBubble msg={msg} agents={AGENTS} onFollowUp={handleQuery} />
+                      </div>
+                    ))}
+                    {loading && (
+                      <div style={{ display: "flex", gap: "10px", alignItems: "flex-start", animation: "fadeIn 0.2s ease" }}>
+                        <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: T.oracleLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", flexShrink: 0 }}>🤖</div>
+                        <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: `2px ${T.radiusMd} ${T.radiusMd} ${T.radiusMd}`, padding: "12px 16px", boxShadow: T.shadow }}>
+                          <TypingIndicator />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+                <QueryInputBar onSubmit={handleQuery} disabled={loading} suggestions={messages.length > 0 ? suggestions : []} />
               </div>
-            )}
-            <QueryInputBar onSubmit={handleQuery} disabled={loading} suggestions={messages.length > 0 ? suggestions : []} />
-          </div>
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </>
   );
