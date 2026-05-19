@@ -877,7 +877,7 @@ export default function OracleAgentHub() {
   const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");
   const chatRef = useRef(null);
 
-  const user = { name: "Rajesh Kumar", initials: "RK", id: "rk@splcg.com" };
+  const user = { name: "Ashutosh soni", initials: "AS", id: "AS@splcg.com" };
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" }); }, 80);
