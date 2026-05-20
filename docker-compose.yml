@@ -1,0 +1,32 @@
+services:
+
+  backend:
+    build:
+      context: ./Backend
+
+    container_name: oasis_backend
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./Backend:/app
+
+    env_file:
+      - ./Backend/.env
+
+  frontend:
+    build:
+      context: ./Frontend
+
+    container_name: oasis_frontend
+
+    ports:
+      - "5173:5173"
+
+    volumes:
+      - ./Frontend:/app
+      - /app/node_modules
+
+    depends_on:
+      - backend

@@ -103,6 +103,74 @@ flowchart LR
 ├─ README.md
 └─ .env.example
 ```
+## detailed structure 
+OASIS PART2/
+ ├── Backend/ (Python/FastAPI)
+ │    ├── middleware/
+ │    ├── models/
+ │    │    ├── agent.py (Python)
+ │    │    ├── agent_registry.py (Python)
+ │    │    ├── chat.py (Python)
+ │    │    └── __init__.py (Python)
+ │    ├── routers/
+ │    │    ├── agent_registry.py (Python/FastAPI)
+ │    │    ├── auth.py (Python/FastAPI)
+ │    │    ├── chat.py (Python/FastAPI)
+ │    │    └── __init__.py (Python)
+ │    ├── scripts/
+ │    │    └── update_versions.py (Python)
+ │    ├── services/
+ │    │    ├── agent_registry.py (Python)
+ │    │    ├── intent_classifier.py (Python)
+ │    │    ├── mock_agent_service.py (Python)
+ │    │    ├── ollama_router.py (Python)
+ │    │    ├── oracle_agent_service.py (Python)
+ │    │    ├── response_formatter.py (Python)
+ │    │    └── __init__.py (Python)
+ │    ├── utils/
+ │    │    ├── job_manager.py (Python)
+ │    │    ├── oauth.py (Python)
+ │    │    └── __init__.py (Python)
+ │    ├── config.py (Python)
+ │    ├── db.py (Python/Database)
+ │    ├── main.py (Python/FastAPI)
+ │    ├── modify_service.py (Python)
+ │    ├── test_chat.py (Python/Pytest)
+ │    ├── test_queries.py (Python/Pytest)
+ │    ├── requirements.txt (Python Dependencies)
+ │    ├── .env (Environment Variables)
+ │    └── .env.example (Environment Variables)
+ │
+ ├── Frontend/ (React/Vite)
+ │    ├── public/
+ │    │    ├── favicon.svg (SVG Graphic)
+ │    │    └── icons.svg (SVG Graphic)
+ │    ├── src/
+ │    │    ├── assets/
+ │    │    │    ├── hero.png (PNG Image)
+ │    │    │    ├── react.svg (SVG Graphic)
+ │    │    │    └── vite.svg (SVG Graphic)
+ │    │    ├── components/
+ │    │    │    ├── AgentBadge.tsx (React/TypeScript)
+ │    │    │    ├── MessageBubble.tsx (React/TypeScript)
+ │    │    │    └── SuggestedFollowUps.tsx (React/TypeScript)
+ │    │    ├── App.css (CSS)
+ │    │    ├── App.tsx (React/TypeScript)
+ │    │    ├── index.css (CSS)
+ │    │    ├── main.tsx (React/TypeScript)
+ │    │    └── OracleAgentHub.jsx (React/JavaScript)
+ │    ├── eslint.config.js (JavaScript/ESLint Config)
+ │    ├── index.html (HTML)
+ │    ├── package.json (Node.js/NPM)
+ │    ├── package-lock.json (Node.js/NPM)
+ │    ├── tsconfig.json (TypeScript Config)
+ │    ├── tsconfig.app.json (TypeScript Config)
+ │    ├── tsconfig.node.json (TypeScript Config)
+ │    └── vite.config.ts (Vite/TypeScript Config)
+ │
+ ├── New Text Document.txt (Text)
+ ├── README.md (Markdown)
+ └── requirements.txt (Python Dependencies)
 
 Important files:
 
