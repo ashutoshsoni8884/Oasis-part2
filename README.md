@@ -74,8 +74,9 @@ flowchart LR
 |---|---|
 | Backend | Python, FastAPI, SQLAlchemy |
 | Database | PostgreSQL (psycopg / SQLAlchemy) |
-| AI / LLM | Oracle AI Agent Studio, external LLMs (configurable) |
+| AI / LLM | Oracle AI Agent Studio, Ollama (Llama 3.2), Google Gemini |
 | APIs | REST (FastAPI) |
+| Authentication | JWT, bcrypt, passlib |
 | Containerization | Docker, optional Docker Compose |
 | Version Control | Git, GitHub |
 | Logging | Structured logging (Python logging), audit logs in DB |
@@ -83,27 +84,7 @@ flowchart LR
 
 ## Project Structure
 
-```
-.
-├─ Backend/
-│  ├─ main.py                # FastAPI app entrypoint
-│  ├─ routers/               # API route modules (chat, agent_registry, auth)
-│  ├─ services/              # Business logic: routing, oracle invocation
-│  ├─ models/                # Pydantic and SQLAlchemy models
-│  ├─ utils/                 # helpers: oauth, job manager, response formatting
-	│  └─ db.py                # DB engine, Base, session
-	├─ config.py               # Settings and .env loader
-	└─ requirements.txt
-
-├─ Frontend/
-│  ├─ src/                   # React UI (Vite)
-│  ├─ public/
-	└─ package.json
-
-├─ README.md
-└─ .env.example
-```
-## detailed structure 
+```text
 OASIS PART2/
  ├── Backend/ (Python/FastAPI)
  │    ├── middleware/
@@ -171,6 +152,7 @@ OASIS PART2/
  ├── New Text Document.txt (Text)
  ├── README.md (Markdown)
  └── requirements.txt (Python Dependencies)
+```
 
 Important files:
 
@@ -243,6 +225,8 @@ Local development (backend):
 cd Backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+> **Note**: For local routing using Ollama, ensure it is installed and running with `ollama serve`, and you have pulled the required model by running `ollama run llama3.2`.
 
 Frontend (dev):
 
