@@ -215,16 +215,26 @@ async function registerUser(credentials) {
 
 async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
   try {
+    // Build history with proper agent_id tracking
+    const historyPayload = history.slice(-8).map(m => ({
+      role: m.role,
+      text: m.text || m.narrative || "",
+      agent_id: m.agentId || m.agent_id || null,
+      agent_name: m.agentName || null,
+    }));
+
+    console.log(`[Submit] Sending query: "${queryText}" with history length: ${historyPayload.length}`);
+    if (historyPayload.length > 0) {
+      console.log(`[Submit] Last history item:`, historyPayload[historyPayload.length - 1]);
+    }
+
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query: queryText,
         session_id: sessionId,
-        history: history.slice(-6).map(m => ({
-          role: m.role,
-          text: m.text || m.narrative || "",
-        })),
+        history: historyPayload,
         bearer_token: bearerToken,
       }),
     });
@@ -235,6 +245,7 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
     }
 
     const data = await res.json();
+    console.log(`[Submit] Job created: ${data.job_id}, status: ${data.status}`);
     return {
       job_id: data.job_id,
       status: data.status,
@@ -266,6 +277,7 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
 
       if (data.status === "COMPLETE" && data.result) {
         const result = data.result;
+        console.log(`[${jobId}] Job complete! Agent: ${result.agent_id}, Intent: ${result.intent}`);
         return {
           success: result.success,
           fallback: result.fallback || false,
@@ -765,8 +777,7 @@ function MessageBubble({ msg, agents, onFollowUp }) {
               <ConfidenceMeter value={msg.confidence} />
             </div>
           )}
-          {/* UPDATED: Display HTML content with proper table styling */}
-          {(msg.html || (msg.narrative && (msg.narrative.includes('</table>') || msg.narrative.includes('<table')))) ? (
+          {(msg.html || (msg.narrative && (msg.narrative.includes('<table>') || msg.narrative.includes('<table')))) ? (
             <div
               className="oracle-html-response"
               style={{
@@ -964,6 +975,7 @@ function WelcomeScreen({ onExampleClick }) {
     { text: "List open purchase orders above $50,000", icon: "🛒", agent: "Procurement" },
     { text: "Pending leave requests for my team", icon: "👥", agent: "HCM / Payroll" },
     { text: "Generate ageing report for Q1 receivables", icon: "📋", agent: "AR Credit" },
+    { text: "Create subscription for ABC Consulting", icon: "✨", agent: "Subscription Creation" },
   ];
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", overflowY: "auto" }}>
@@ -1095,7 +1107,15 @@ export default function OracleAgentHub() {
       return;
     }
 
-    const userMsg = { id: uuid(), role: "user", text: queryText, time: new Date(), userName: user.name };
+    const userMsg = {
+      id: uuid(),
+      role: "user",
+      text: queryText,
+      time: new Date(),
+      userName: user.name,
+      // If we have an active agent, track it in user message too for sticky session
+      agentId: activeAgentId
+    };
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
     setRouterStage(0);
@@ -1105,7 +1125,8 @@ export default function OracleAgentHub() {
     await new Promise(r => setTimeout(r, 400));
     setRouterStage(2);
 
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-6), bearerToken);
+    // Pass the last 8 messages for better context
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-8), bearerToken);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
@@ -1126,14 +1147,25 @@ export default function OracleAgentHub() {
           return prev;
         }
 
-        return [...prev, {
-          id: uuid(), role: "system", time: new Date(),
-          agentId: result.agentId, intent: result.intent, confidence: result.confidence,
-          narrative: result.narrative, html: result.html, kpis: result.kpis,
-          columns: result.columns, rows: result.rows,
+        const newMsg = {
+          id: uuid(),
+          role: "system",
+          time: new Date(),
+          agentId: result.agentId,
+          agentName: result.agentName,
+          intent: result.intent,
+          confidence: result.confidence,
+          narrative: result.narrative,
+          html: result.html,
+          kpis: result.kpis,
+          columns: result.columns,
+          rows: result.rows,
           charts: result.charts,
           followUps: result.followUps,
-        }];
+        };
+
+        console.log(`[HandleQuery] Adding message for agent: ${result.agentId}`);
+        return [...prev, newMsg];
       });
     } else {
       setMessages(prev => [...prev, {

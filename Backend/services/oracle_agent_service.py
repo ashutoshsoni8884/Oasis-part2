@@ -20,11 +20,21 @@ MAX_POLL_ATTEMPTS = 600  # 600 * 0.5 second = 5 minutes
 POLL_INTERVAL_SECONDS = 0.5
 REQUEST_TIMEOUT = 60.0
 
-# Mapping of api_job_id -> {oracle_job_id, headers, intent, confidence, agent_id}
+# Mapping of api_job_id -> {oracle_job_id, headers, intent, confidence, agent_id, session_id, agent_code}
 _job_state = {}
 
 
-async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_id: str, bearer_token: str = None, job_id: str = None, version: int = None) -> ChatResponse:
+async def invoke_oracle_agent(
+    query: str, 
+    intent: str, 
+    confidence: float, 
+    agent_id: str, 
+    bearer_token: str = None, 
+    job_id: str = None, 
+    version: int = None, 
+    session_id: str = None,
+    agent_code: str = None  # Add agent_code for workflow tracking
+) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
     For the new async flow:
@@ -40,6 +50,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         bearer_token: Authentication token (required)
         job_id: API job_id (from job_manager)
         version: Agent team version (optional, falls back to settings)
+        session_id: Session identifier for workflow tracking
+        agent_code: Agent code for workflow completion (e.g., "SUBSCRIPTIONCREATEAGENT")
     """
     settings = get_settings()
     
@@ -94,7 +106,7 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
         "version": agent_version,
         "status": "PUBLISHED",
         "parameters": {},
-        "conversationId": None,
+        "conversationId": session_id,
         "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
     }
 
@@ -187,6 +199,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
             "intent": intent,
             "confidence": confidence,
             "agent_id": agent_id,
+            "session_id": session_id,
+            "agent_code": agent_code or agent_id,  # Store agent code for workflow cleanup
         }
         
         # Update job status to RUNNING
@@ -202,6 +216,8 @@ async def invoke_oracle_agent(query: str, intent: str, confidence: float, agent_
                 intent=intent,
                 confidence=confidence,
                 agent_id=agent_id,
+                session_id=session_id,
+                agent_code=agent_code or agent_id,
             )
         )
         
@@ -223,6 +239,8 @@ async def _poll_oracle_async(
     intent: str,
     confidence: float,
     agent_id: str,
+    session_id: str = None,
+    agent_code: str = None,
 ) -> None:
     """Background task: Poll Oracle Fusion for job completion."""
     
@@ -283,6 +301,11 @@ async def _poll_oracle_async(
                 )
                 
                 logger.info(f"[{api_job_id}] Oracle job {oracle_job_id} completed successfully")
+                
+                # NEW: End workflow if this was a subscription creation or other workflow agent
+                if session_id and agent_code:
+                    await _end_workflow_if_completed(session_id, agent_code, result)
+                
                 return
 
             elif status == "ERROR":
@@ -305,6 +328,10 @@ async def _poll_oracle_async(
                         status="COMPLETE",
                         result=result.dict() if hasattr(result, 'dict') else result,
                     )
+                    
+                    # End workflow even on partial success
+                    if session_id and agent_code:
+                        await _end_workflow_if_completed(session_id, agent_code, result)
                     return
                 
                 # Build a user-friendly error message
@@ -327,6 +354,11 @@ async def _poll_oracle_async(
                     status="ERROR",
                     error=friendly_error,
                 )
+                
+                # NEW: End workflow on error to allow new attempts
+                if session_id and agent_code:
+                    await _end_workflow_on_error(session_id, agent_code, friendly_error)
+                
                 return
 
             elif status in ("RUNNING", "WAITING"):
@@ -342,3 +374,80 @@ async def _poll_oracle_async(
             status="ERROR",
             error=f"Oracle agent timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS} seconds"
         )
+        
+        # NEW: End workflow on timeout
+        if session_id and agent_code:
+            await _end_workflow_on_error(session_id, agent_code, "Workflow timed out")
+
+
+# ============================================================================
+# NEW: Workflow Management Integration Functions
+# ============================================================================
+
+async def _end_workflow_if_completed(session_id: str, agent_code: str, result: ChatResponse) -> None:
+    """
+    End workflow when subscription creation is complete (after activation or user confirms).
+    Checks if the response indicates workflow completion.
+    """
+    try:
+        from services.ollama_router import end_workflow
+        
+        # Check if this response indicates workflow completion
+        # For subscription creation: check if subscription was activated or user said no
+        is_complete = False
+        
+        if result.narrative:
+            narrative_lower = result.narrative.lower()
+            # Completion indicators
+            if any(phrase in narrative_lower for phrase in [
+                "subscription created successfully",
+                "subscription activated",
+                "all done",
+                "subscription has been created",
+                "view subscription",
+                "create another?"
+            ]):
+                is_complete = True
+                logger.info(f"[{session_id}] Workflow completion detected for {agent_code}")
+        
+        # Also check if this was a final action like activation, cancellation, or closure
+        if result.message and any(action in result.message.lower() for action in ["activated", "cancelled", "closed", "suspended"]):
+            is_complete = True
+            logger.info(f"[{session_id}] Final action detected: {result.message}")
+        
+        if is_complete:
+            end_workflow(session_id)
+            logger.info(f"[{session_id}] Workflow ended for {agent_code} after completion")
+            
+    except Exception as e:
+        logger.warning(f"Failed to end workflow: {e}")
+
+
+async def _end_workflow_on_error(session_id: str, agent_code: str, error: str) -> None:
+    """
+    End workflow on error to allow new attempts.
+    """
+    try:
+        from services.ollama_router import end_workflow
+        
+        end_workflow(session_id)
+        logger.info(f"[{session_id}] Workflow ended for {agent_code} due to error: {error[:100]}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to end workflow on error: {e}")
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+def get_job_state(job_id: str) -> dict:
+    """Get the stored state for a job"""
+    return _job_state.get(job_id)
+
+
+def clear_completed_jobs():
+    """Clear the completed jobs set (useful for testing)"""
+    global _completed_jobs
+    _completed_jobs.clear()
+    logger.info("Completed jobs set cleared")
