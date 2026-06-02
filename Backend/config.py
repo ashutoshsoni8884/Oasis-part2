@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     AGENT_TEAM_VERSION: int = 1
 
     # ── Database ───────────────────────────────────────────────────────
-    DB_HOST: str = "172.16.132.100"
+    DB_HOST: str = "172.16.132.107"
     DB_PORT: int = 5432
-    DB_NAME: str = "oasisdb"
+    DB_NAME: str = "project_db"
     DB_USER: str = "oasis_user"
     DB_PASSWORD: str = "8884"
 

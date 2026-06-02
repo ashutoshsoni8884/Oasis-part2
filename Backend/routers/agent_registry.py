@@ -16,6 +16,7 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Create the router instance
 router = APIRouter(prefix="/api/agent-registry", tags=["agent-registry"])
 
 # ─── Request/Response Models ────────────────────────────────────────────────
@@ -178,3 +179,51 @@ async def reactivate_agent(
     db.commit()
     
     return {"message": f"Agent {team_code} reactivated", "team_code": team_code}
+
+
+# ─── Additional endpoint to get agent by code ────────────────────────────────
+@router.get("/{team_code}")
+async def get_agent(
+    team_code: str,
+    db: Session = Depends(get_db)
+):
+    """Get a specific agent by team code"""
+    
+    agent = db.query(AgentRegistry).filter(
+        AgentRegistry.team_code == team_code
+    ).first()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent {team_code} not found")
+    
+    return {
+        "team_code": agent.team_code,
+        "team_name": agent.team_name,
+        "description": agent.description,
+        "version": agent.version,
+        "is_active": agent.is_active,
+        "owner_team": agent.owner_team,
+        "owner_email": agent.owner_email,
+        "created_at": agent.created_at.isoformat() if agent.created_at else None,
+        "updated_at": agent.updated_at.isoformat() if agent.updated_at else None,
+    }
+
+
+# ─── Health check for agent registry ────────────────────────────────────────
+@router.get("/health/status")
+async def registry_health(db: Session = Depends(get_db)):
+    """Check if agent registry is accessible"""
+    
+    try:
+        agent_count = db.query(AgentRegistry).count()
+        return {
+            "status": "healthy",
+            "agent_count": agent_count,
+            "active_agents": db.query(AgentRegistry).filter(AgentRegistry.is_active == True).count()
+        }
+    except Exception as e:
+        logger.error(f"Registry health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }

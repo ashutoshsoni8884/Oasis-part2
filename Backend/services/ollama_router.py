@@ -44,16 +44,26 @@ ACTIONS = ["yes", "no", "activate", "hold", "suspend", "cancel", "close", "hold 
 # ============================================================================
 
 def start_workflow(session_id: str, agent_code: str, step: str = "start") -> None:
-    """Start a new workflow for a session"""
+    """
+    Start a new workflow for a session.
+    Always replaces any existing workflow (end old, start new).
+    The oracle_conversation_id resets to None so the first invoke call to the
+    new agent starts a fresh Oracle conversation, not a stale one.
+    """
     if not session_id:
         return
-    
+
+    if session_id in _active_workflows:
+        old = _active_workflows[session_id]["agent_code"]
+        logger.info(f"Replacing existing workflow ({old}) with new one ({agent_code}) for session={session_id}")
+
     _active_workflows[session_id] = {
         "agent_code": agent_code,
         "step": step,
         "started_at": datetime.utcnow(),
         "expires_at": datetime.utcnow() + timedelta(seconds=WORKFLOW_TIMEOUT_SECONDS),
-        "message_count": 1
+        "message_count": 1,
+        "oracle_conversation_id": None,   # reset — new agent gets a fresh Oracle conversation
     }
     logger.info(f"Started workflow: session={session_id}, agent={agent_code}, step={step}")
 
@@ -161,42 +171,75 @@ def is_subscription_creation_request(query: str) -> bool:
     return any(kw in query_lower for kw in create_keywords)
 
 
-def is_subscription_followup(user_query: str, conversation_history: List[dict] = None) -> bool:
-    """Check if this looks like a subscription creation follow-up response"""
+def is_subscription_followup(user_query: str, conversation_history: List[dict] = None, session_id: str = None) -> bool:
+    """
+    Check if this looks like a subscription creation follow-up response.
+
+    KEY RULE: Bare tokens (numbers, dates, yes/no) are only treated as
+    subscription follow-ups when there is an ACTIVE workflow for this session.
+    Without an active workflow, these tokens are too generic and could be
+    answers to anything — they must go through normal routing.
+    """
     query_lower = user_query.lower().strip()
-    
-    # Number (product selection)
+
+    # Check if there is an active subscription workflow for this session.
+    # Bare tokens are ONLY valid follow-ups when the workflow is live.
+    workflow_active = (
+        session_id is not None and
+        get_active_agent(session_id) == "SUBSCRIPTIONCREATEAGENT"
+    )
+
+    # Number (product selection) — only valid in active workflow
     if re.match(r'^\d+$', user_query):
-        return True
-    
-    # Product name
+        return workflow_active
+
+    # Date format — only valid in active workflow
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', user_query):
+        return workflow_active
+
+    # Date keywords — only valid in active workflow
+    if query_lower in ["today", "tomorrow", "default", "same"]:
+        return workflow_active
+
+    # Currency — only valid in active workflow
+    if query_lower in CURRENCIES:
+        return workflow_active
+
+    # Action responses — only valid in active workflow
+    if query_lower in ACTIONS:
+        return workflow_active
+
+    # Product name by text match — valid regardless (specific enough)
     for product in PRODUCT_NAMES:
         if product.lower() in query_lower:
             return True
     
-    # Date format
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', user_query):
-        return True
-    
-    # Date keywords
-    if query_lower in ["today", "tomorrow", "default", "same"]:
-        return True
-    
-    # Currency
-    if query_lower in CURRENCIES:
-        return True
-    
-    # Action responses
-    if query_lower in ACTIONS:
-        return True
-    
-    # Check conversation history for recent subscription creation context
+    # Check RECENT conversation history for active subscription creation context.
+    # Only look back 2 messages so a COMPLETED subscription flow doesn't keep
+    # capturing unrelated short replies ("yes", "no", bare numbers) in future turns.
     if conversation_history:
-        for msg in reversed(conversation_history[-4:]):
+        for msg in reversed(conversation_history[-2:]):
             if msg.get("role") == "assistant" and "SUBSCRIPTIONCREATEAGENT" in str(msg.get("agent_id", "")):
-                return True
-            # Check if assistant message contains product list
-            if msg.get("role") == "assistant" and any(keyword in str(msg.get("text", "")).lower() for keyword in ["available products", "which product", "subscription", "start date", "end date"]):
+                # Only count it as a follow-up if the message contains an active
+                # prompt (product list, date request) — not a completion summary.
+                msg_content = str(msg.get("text", "")) + " " + str(msg.get("narrative", ""))
+                msg_lower = msg_content.lower()
+                is_active_prompt = any(keyword in msg_lower for keyword in [
+                    "available products", "which product", "select a product",
+                    "start date", "end date", "enter the", "please provide",
+                    "would you like to activate",
+                ])
+                if is_active_prompt:
+                    return True
+            # Check assistant message for subscription flow prompt keywords
+            msg_content = str(msg.get("text", "")) + " " + str(msg.get("narrative", ""))
+            if msg.get("role") == "assistant" and any(
+                keyword in msg_content.lower()
+                for keyword in [
+                    "available products", "which product", "select a product",
+                    "start date", "end date", "would you like to activate",
+                ]
+            ):
                 return True
     
     return False
@@ -311,7 +354,8 @@ Agent Code:"""
 async def route_to_agent(
     user_query: str, 
     session_id: str = None, 
-    conversation_history: List[dict] = None
+    conversation_history: List[dict] = None,
+    current_conversation_id: str = None
 ) -> Dict[str, Any]:
     """
     Main routing function with session awareness:
@@ -333,24 +377,61 @@ async def route_to_agent(
     
     # Step 0: Clean up expired workflows periodically
     cleanup_expired_workflows()
+
+    # NOTE: current_conversation_id is NOT used for routing decisions here.
+    # The frontend sends it back so oracle_agent_service can include it in the
+    # invokeAsync payload — it is NOT a signal to re-use the same agent.
+    # Routing is determined entirely by workflow state + Ollama + keywords below.
+
     
-    # Step 1: Check for active workflow in this session (HIGHEST PRIORITY)
+    # Step 1: Check for active workflow — but ONLY continue it if the query
+    # is genuinely a workflow follow-up, not a request for a different agent.
+    #
+    # Decision logic:
+    #   a) Query is a clear follow-up (bare number, date, yes/no, product name)
+    #      → stay in the active workflow regardless of which agent
+    #   b) Query clearly targets a DIFFERENT agent (credit limit, AR, HCM, etc.)
+    #      → end the workflow and let normal routing handle it
+    #   c) Query starts a NEW subscription → end old workflow, start fresh one
+    #   d) Ambiguous long-form query → let Ollama decide, then end/keep workflow
     if session_id:
         active_agent = get_active_agent(session_id)
         if active_agent:
-            logger.info(f"✅ Using active workflow agent: {active_agent} for session {session_id}")
             agents = await fetch_agents_from_database()
-            agent = next((a for a in agents if a["team_code"] == active_agent), None)
-            if agent:
-                step = detect_workflow_step(user_query, conversation_history)
-                continue_workflow(session_id, step)
-                return {
-                    "agent_code": active_agent,
-                    "agent_name": agent["team_name"],
-                    "confidence": 1.0,
-                    "reasoning": f"Continuing active {active_agent} workflow (step: {step})",
-                    "version": agent.get("version")
-                }
+
+            # (a) Is this unambiguously a workflow step reply?
+            #     Only bare follow-up tokens should hard-lock to the active agent.
+            #     We do NOT lock long natural-language sentences here.
+            step = detect_workflow_step(user_query, conversation_history)
+            is_ambiguous_followup = step in (
+                "product_selection", "date_selection",
+                "currency_selection", "activation", "post_creation_action"
+            )
+
+            if is_ambiguous_followup:
+                agent = next((a for a in agents if a["team_code"] == active_agent), None)
+                if agent:
+                    continue_workflow(session_id, step)
+                    logger.info(
+                        f"✅ Staying in active workflow: {active_agent} "
+                        f"(step: {step}, query: '{user_query[:40]}')"
+                    )
+                    return {
+                        "agent_code": active_agent,
+                        "agent_name": agent["team_name"],
+                        "confidence": 1.0,
+                        "reasoning": f"Workflow follow-up token for {active_agent} (step: {step})",
+                        "version": agent.get("version")
+                    }
+
+            # (b/c/d) Query is a full sentence — check if it's for a different agent.
+            # End the current workflow so Ollama can route freely.
+            # If Ollama routes back to SUBSCRIPTIONCREATEAGENT, a new workflow starts.
+            logger.info(
+                f"🔀 Active workflow ({active_agent}) present but query is a full sentence — "
+                f"ending workflow and re-routing: '{user_query[:60]}'"
+            )
+            end_workflow(session_id)
     
     # Step 2: Get all agents from database
     agents = await fetch_agents_from_database()
@@ -367,7 +448,7 @@ async def route_to_agent(
     logger.info(f"Routing query '{user_query[:50]}...' with {len(agents)} available agents")
     
     # Step 3: Check if this is a subscription creation follow-up (SECOND PRIORITY)
-    if is_subscription_followup(user_query, conversation_history):
+    if is_subscription_followup(user_query, conversation_history, session_id):
         logger.info(f"🎯 Detected subscription creation follow-up: '{user_query}'")
         selected_code = "SUBSCRIPTIONCREATEAGENT"
         agent = next((a for a in agents if a["team_code"].upper() == selected_code), None)
@@ -475,7 +556,7 @@ async def route_to_agent(
                     start_workflow(session_id, "SUBSCRIPTIONCREATEAGENT", step="start")
         
         # Check for subscription follow-up (product names, dates, currencies, actions)
-        elif is_subscription_followup(user_query, conversation_history):
+        elif is_subscription_followup(user_query, conversation_history, session_id):
             selected_agent = next((a for a in agents if a["team_code"] == "SUBSCRIPTIONCREATEAGENT"), None)
             if selected_agent:
                 logger.info(f"Fallback matched: SUBSCRIPTIONCREATEAGENT (follow-up)")

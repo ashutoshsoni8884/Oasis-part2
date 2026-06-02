@@ -1,7 +1,21 @@
 """
-Chat Router — POST /api/chat, GET /api/chat/{job_id}
-Async pattern: POST returns job_id immediately, GET polls for result
-Uses Ollama + Database for intelligent agent routing
+Chat Router — POST /api/chat (submit) + GET /api/chat/{job_id} (poll)
+
+FIX SUMMARY:
+  1. Removed broken PRIORITY 1/2 sticky-agent logic that read agent_id from
+     history messages. Those messages store short display ids like "ar" not
+     Oracle team codes like "ARCREDITAGENTTEAM" — the lookup always failed, and
+     when it "worked" for SUBSCRIPTIONCREATEAGENT it passed NO conversation_id,
+     restarting the Oracle flow from scratch on every turn.
+
+  2. conversation_id=request.conversation_id is now correctly passed to
+     invoke_oracle_agent so Oracle can resume the supervisor dialogue.
+
+  3. get_conversation_id() is now imported and used correctly in the poll
+     endpoint (the old import was crashing silently — function didn't exist).
+
+  4. Oracle's real conversationId is returned in JobResponse immediately
+     (at QUEUED status) so the frontend can store it before polling.
 """
 
 import logging
@@ -9,11 +23,14 @@ from fastapi import APIRouter, HTTPException
 
 from config import get_settings
 from models.chat import ChatRequest, ChatResponse, JobResponse, JobStatusResponse
-from services.ollama_router import route_to_agent
-from services.oracle_agent_service import invoke_oracle_agent
+from services.ollama_router import route_to_agent, end_workflow
+from services.oracle_agent_service import (
+    invoke_oracle_agent,
+    get_job_state,
+    get_conversation_id,
+)
 from db import SessionLocal, PromptLog
 from utils import job_manager
-from services.ollama_router import end_workflow  # Import workflow manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -23,149 +40,93 @@ router = APIRouter(prefix="/api", tags=["chat"])
 async def chat_submit(request: ChatRequest) -> JobResponse:
     """
     Submit a chat query for async processing.
-    Returns job_id immediately. Use GET /api/chat/{job_id} to poll for results.
-    
-    Requires:
-    - query: The user query
-    - bearer_token: Authentication token for Oracle Fusion (ONE token for ALL agents)
-    
-    Optional:
-    - session_id: Session identifier
-    - history: Conversation history
-    """
-    settings = get_settings()
-    query = request.query.strip()
+    Returns job_id immediately. Poll GET /api/chat/{job_id} for results.
 
+    Required: query, bearer_token
+    Optional: session_id, history, conversation_id (Oracle's UUID from last response)
+
+    IMPORTANT: Send back the conversation_id you received in the previous response
+    on every subsequent turn. This is Oracle's own UUID — NOT your session_id.
+    """
+    query = request.query.strip()
     if not query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if not request.bearer_token:
+        raise HTTPException(status_code=401, detail="bearer_token is required")
+
+    logger.info(f"Chat query: {query[:100]}")
+    logger.info(f"Session: {request.session_id} | Oracle conversationId: {request.conversation_id}")
+    logger.info(f"History: {len(request.history or [])} msgs")
+
+    if request.history:
+        logger.info("=== History (last 4) ===")
+        for i, msg in enumerate(request.history[-4:]):
+            logger.info(
+                f"  [{i}] role={msg.get('role')} | agent_id={msg.get('agent_id')} | "
+                f"text={str(msg.get('text') or msg.get('narrative', ''))[:50]}"
+            )
+
+    # ── Route via Ollama + session workflow awareness ────────────────────────
+    # route_to_agent handles all priority logic:
+    #   P1 - active session workflow (highest — catches mid-flow subscription turns)
+    #   P2 - subscription follow-up pattern match (bare number, date, yes/no)
+    #   P3 - new subscription creation keyword
+    #   P4 - Ollama LLM routing
+    #   P5 - keyword fallback when Ollama is down
+    try:
+        routing_result = await route_to_agent(
+            user_query=query,
+            session_id=request.session_id,
+            conversation_history=request.history,
+            current_conversation_id=request.conversation_id,
+        )
+        logger.info(f"Routing: {routing_result}")
+    except Exception as e:
+        logger.error(f"Routing failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to route query: {str(e)}")
+
+    agent_code = routing_result.get("agent_code")
+    agent_name = routing_result.get("agent_name")
+    confidence = routing_result.get("confidence", 1.0)
+    agent_version = routing_result.get("version")
+
+    if not agent_code:
         raise HTTPException(
             status_code=400,
-            detail="Query cannot be empty"
-        )
-    
-    if not request.bearer_token:
-        raise HTTPException(
-            status_code=401,
-            detail="bearer_token is required for authentication"
+            detail=(
+                f"Could not route your query. "
+                f"{routing_result.get('reasoning', 'No agent matched.')} "
+                f"Please try rephrasing."
+            ),
         )
 
-    logger.info(f"Chat query submitted: {query[:100]}")
-    logger.info(f"Session ID: {request.session_id}")
-    logger.info(f"History length: {len(request.history) if request.history else 0}")
-
-    # ── STEP 1: Use Ollama + Database to route to correct agent ─────────────
-    agent_code = None
-    agent_name = None
-    confidence = 1.0
-    agent_version = None
-
-    # Debug: Log history contents for troubleshooting
-    if request.history:
-        logger.info("=== Conversation History ===")
-        for i, msg in enumerate(request.history[-4:]):  # Last 4 messages
-            logger.info(f"  History[{i}]: role={msg.get('role')}, agent_id={msg.get('agent_id')}, agent_name={msg.get('agent_name')}, text={str(msg.get('text', ''))[:50]}")
-
-    # Try to maintain sticky session from history (ENHANCED)
-    if request.history:
-        # First, try to get from last assistant message
-        for msg in reversed(request.history):
-            if msg.get("role") == "assistant" and msg.get("agent_id"):
-                agent_code = msg.get("agent_id")
-                agent_name = msg.get("agent_name", agent_code)
-                logger.info(f"✅ Using sticky agent from assistant message: {agent_code}")
-                break
-        
-        # If not found, try to get from last user message that has agent_id
-        if not agent_code:
-            for msg in reversed(request.history):
-                if msg.get("role") == "user" and msg.get("agent_id"):
-                    agent_code = msg.get("agent_id")
-                    agent_name = msg.get("agent_name", agent_code)
-                    logger.info(f"✅ Using sticky agent from user message: {agent_code}")
-                    break
-        
-        # If still not found but query is short (likely a follow-up), check conversation context
-        if not agent_code and len(query.split()) < 5:
-            # Check if the conversation was with SUBSCRIPTIONCREATEAGENT
-            for msg in request.history:
-                if msg.get("agent_id") == "SUBSCRIPTIONCREATEAGENT":
-                    agent_code = "SUBSCRIPTIONCREATEAGENT"
-                    agent_name = "Subscription Creation Agent"
-                    logger.info(f"✅ Using subscription agent based on conversation context")
-                    break
-
-    # If no sticky agent from history, route using Ollama
-    if not agent_code:
-        logger.info("No sticky agent found, calling route_to_agent...")
-        try:
-            # Pass session_id and conversation_history to router for context-aware routing
-            routing_result = await route_to_agent(
-                query, 
-                session_id=request.session_id,
-                conversation_history=request.history
-            )
-            logger.info(f"Routing result: {routing_result}")
-        except Exception as e:
-            logger.error(f"Ollama routing failed: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to route query: {str(e)}"
-            )
-
-        # Check if routing was successful
-        if not routing_result.get("agent_code"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Could not route your query. {routing_result.get('reasoning', 'Unknown reason')}. Please try rephrasing or ask about payments, subscriptions, or collections. Make sure the backend is running at http://localhost:8000 and you provided a valid bearer token."
-            )
-
-        agent_code = routing_result["agent_code"]
-        agent_name = routing_result["agent_name"]
-        confidence = routing_result["confidence"]
-        agent_version = routing_result.get("version")
-
-    logger.info(f"✅ FINAL ROUTING: agent_code={agent_code}, agent_name={agent_name}, version={agent_version}, confidence={confidence}")
-
-    # ── STEP 2: Create job and return job_id ────────────────────────────────
-    api_job_id = job_manager.create_job(
-        query=query,
-        bearer_token=request.bearer_token,
-    )
-    
-    # Store routing info for later
-    job_manager.update_job(
-        api_job_id, 
-        status="QUEUED",
-        result={
-            "agent_code": agent_code,
-            "agent_name": agent_name,
-            "confidence": confidence,
-            "version": agent_version,
-        }
+    logger.info(
+        f"ROUTING: agent={agent_code} | name={agent_name} | "
+        f"version={agent_version} | confidence={confidence}"
     )
 
+    # ── Create job ────────────────────────────────────────────────────────────
+    api_job_id = job_manager.create_job(query=query, bearer_token=request.bearer_token)
     logger.info(f"Job created: {api_job_id}")
 
-    # ── STEP 3: Log to database ─────────────────────────────────────────────
+    # ── Log to database ───────────────────────────────────────────────────────
     db = SessionLocal()
     try:
-        log_entry = PromptLog(
-            query=query,
-            endpoint="/api/chat",
-            agent_id=agent_code,
-            intent=agent_name,
-            confidence=str(confidence)
-        )
-        db.add(log_entry)
+        db.add(PromptLog(
+            query=query, endpoint="/api/chat",
+            agent_id=agent_code, intent=agent_name, confidence=str(confidence),
+        ))
         db.commit()
-        logger.info(f"Prompt logged to database: agent={agent_code}")
     except Exception as e:
-        logger.error(f"Failed to log to database: {e}")
+        logger.error(f"DB log failed: {e}")
         db.rollback()
     finally:
         db.close()
 
-    # ── STEP 4: Invoke Oracle agent asynchronously ──────────────────────────
-    await invoke_oracle_agent(
+    # ── Invoke Oracle agent ───────────────────────────────────────────────────
+    # Pass request.conversation_id (Oracle's UUID or None on first turn).
+    # NEVER pass session_id here — Oracle rejects it with "workflow not found".
+    invoke_result = await invoke_oracle_agent(
         query=query,
         intent=agent_name,
         confidence=confidence,
@@ -174,106 +135,80 @@ async def chat_submit(request: ChatRequest) -> JobResponse:
         job_id=api_job_id,
         version=agent_version,
         session_id=request.session_id,
-        agent_code=agent_code,  # Pass agent_code for workflow completion tracking
+        agent_code=agent_code,
+        conversation_id=request.conversation_id,   # Oracle UUID or None (first turn)
     )
+
+    # ── Return Oracle's conversationId immediately ────────────────────────────
+    # The frontend must store this and send it back on the next request.
+    new_conversation_id = None
+    if invoke_result and hasattr(invoke_result, "conversation_id"):
+        new_conversation_id = invoke_result.conversation_id
+        if new_conversation_id:
+            logger.info(f"Oracle conversationId to return: {new_conversation_id}")
+        else:
+            logger.warning("invoke_oracle_agent returned no conversationId")
 
     return JobResponse(
         job_id=api_job_id,
         status="QUEUED",
-        message=f"Routed to {agent_name}. Poll with GET /api/chat/{api_job_id}",
+        message=f"Routed to {agent_name}. Poll GET /api/chat/{api_job_id}",
+        conversation_id=new_conversation_id,   # Oracle's real UUID — frontend must store this
     )
 
 
 @router.get("/chat/{job_id}", response_model=JobStatusResponse)
 async def chat_poll(job_id: str) -> JobStatusResponse:
-    """
-    Poll for the result of an async chat job.
-    
-    Returns:
-    - status: "QUEUED" | "RUNNING" | "COMPLETE" | "ERROR"
-    - result: ChatResponse (only when status == "COMPLETE")
-    - error: Error message (only when status == "ERROR")
-    """
+    """Poll for the result of a submitted job."""
     job_status = job_manager.get_job_status(job_id)
-    
     if not job_status:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Job {job_id} not found or has expired"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found or expired")
+
     status = job_status["status"]
-    
+    conv_id = get_conversation_id(job_id)   # Oracle's UUID for this job
+
     if status in ("QUEUED", "RUNNING"):
         return JobStatusResponse(
-            job_id=job_id,
-            status=status,
-            message=f"Still processing... (status: {status})",
+            job_id=job_id, status=status,
+            message=f"Processing... (status: {status})",
+            conversation_id=conv_id,
         )
-    
+
     if status == "COMPLETE":
-        result = job_manager.get_result(job_id)
-        if result:
-            # Get additional job info if needed for workflow cleanup
-            from services.oracle_agent_service import get_job_state
-            job_state = get_job_state(job_id)
-            
-            # If this was a subscription creation workflow that completed,
-            # we might want to end the workflow here as an additional safety measure
-            if job_state and job_state.get("agent_code") == "SUBSCRIPTIONCREATEAGENT":
-                # Check if the result indicates completion
-                if result.get("narrative"):
-                    narrative = result.get("narrative", "").lower()
-                    if any(phrase in narrative for phrase in ["subscription created successfully", "all done", "create another?"]):
-                        logger.info(f"Workflow completion detected in poll, ending workflow for session {job_state.get('session_id')}")
-                        # Note: The workflow is already ended in oracle_agent_service.py
-                        # This is just an additional safety measure
-            
-            return JobStatusResponse(
-                job_id=job_id,
-                status="COMPLETE",
-                result=result if isinstance(result, ChatResponse) else ChatResponse(**result),
-            )
-    
-    if status == "ERROR":
-        error = job_manager.get_error(job_id)
-        # End workflow on error if it was a subscription workflow
-        from services.oracle_agent_service import get_job_state
-        job_state = get_job_state(job_id)
-        if job_state and job_state.get("agent_code") == "SUBSCRIPTIONCREATEAGENT":
-            if job_state.get("session_id"):
-                logger.info(f"Ending workflow for session {job_state.get('session_id')} due to error")
-                end_workflow(job_state.get("session_id"))
-        
+        result_data = job_manager.get_result(job_id)
+        if not result_data:
+            raise HTTPException(status_code=500, detail="Job COMPLETE but result missing")
+
+        chat_result = ChatResponse(**result_data) if not isinstance(result_data, ChatResponse) else result_data
+
+        if conv_id and not chat_result.conversation_id:
+            chat_result.conversation_id = conv_id
+
         return JobStatusResponse(
-            job_id=job_id,
-            status="ERROR",
-            error=error or "Unknown error",
+            job_id=job_id, status="COMPLETE",
+            result=chat_result,
+            conversation_id=chat_result.conversation_id or conv_id,
         )
-    
-    return JobStatusResponse(
-        job_id=job_id,
-        status=status,
-        message="Job status unknown",
-    )
+
+    if status == "ERROR":
+        error_msg = job_manager.get_error(job_id)
+        job_state = get_job_state(job_id)
+        if job_state and job_state.get("session_id"):
+            logger.info(f"Ending workflow for session {job_state['session_id']} after ERROR")
+            try:
+                end_workflow(job_state["session_id"])
+            except Exception as e:
+                logger.warning(f"Could not end workflow: {e}")
+        return JobStatusResponse(job_id=job_id, status="ERROR", error=error_msg or "Unknown error")
+
+    return JobStatusResponse(job_id=job_id, status=status)
 
 
-# ─── Additional endpoint to manually end a workflow (optional) ────────────────
 @router.post("/chat/{session_id}/end_workflow")
 async def end_session_workflow(session_id: str):
-    """
-    Manually end a workflow for a session.
-    Useful if a user wants to start a new conversation context.
-    """
+    """Manually end a workflow so the user can start fresh."""
     try:
         end_workflow(session_id)
-        return {
-            "success": True,
-            "message": f"Workflow ended for session {session_id}"
-        }
+        return {"success": True, "message": f"Workflow ended for session {session_id}"}
     except Exception as e:
-        logger.error(f"Failed to end workflow: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to end workflow: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to end workflow: {str(e)}")

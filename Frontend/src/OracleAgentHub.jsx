@@ -213,20 +213,20 @@ async function registerUser(credentials) {
 // POST /api/chat returns {job_id, status: "QUEUED"}
 // GET /api/chat/{job_id} returns {job_id, status, result} when complete
 
-async function submitChatJob(queryText, sessionId, history = [], bearerToken = "") {
+async function submitChatJob(queryText, sessionId, history = [], bearerToken = "", conversationId = null) {
   try {
-    // Build history with proper agent_id tracking
+    // FIX: send BOTH "text" and "narrative" so backend is_subscription_followup()
+    // can detect subscription context regardless of which field it checks.
+    // Also normalise role "system" → "assistant" (backend expects standard roles).
     const historyPayload = history.slice(-8).map(m => ({
-      role: m.role,
-      text: m.text || m.narrative || "",
+      role: m.role === "system" ? "assistant" : m.role,
+      text: m.text || m.narrative || "",           // legacy field
+      narrative: m.narrative || m.text || "",      // field backend actually checks
       agent_id: m.agentId || m.agent_id || null,
       agent_name: m.agentName || null,
     }));
 
-    console.log(`[Submit] Sending query: "${queryText}" with history length: ${historyPayload.length}`);
-    if (historyPayload.length > 0) {
-      console.log(`[Submit] Last history item:`, historyPayload[historyPayload.length - 1]);
-    }
+    console.log(`[Submit] query="${queryText.slice(0, 60)}" | history=${historyPayload.length} | conversationId=${conversationId}`);
 
     const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: "POST",
@@ -236,6 +236,7 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
         session_id: sessionId,
         history: historyPayload,
         bearer_token: bearerToken,
+        conversation_id: conversationId,   // Oracle's UUID — send back every turn after first
       }),
     });
 
@@ -245,11 +246,13 @@ async function submitChatJob(queryText, sessionId, history = [], bearerToken = "
     }
 
     const data = await res.json();
-    console.log(`[Submit] Job created: ${data.job_id}, status: ${data.status}`);
+    // FIX: return conversation_id from submit response (available immediately at QUEUED)
+    console.log(`[Submit] job_id=${data.job_id} | Oracle conversationId=${data.conversation_id}`);
     return {
       job_id: data.job_id,
       status: data.status,
       message: data.message,
+      conversation_id: data.conversation_id,   // Oracle's real UUID
     };
   } catch (err) {
     console.error("Failed to submit query:", err);
@@ -286,6 +289,7 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
           confidence: result.confidence,
           agentId: result.agent_id,
           agentName: result.agent_name,
+          conversationId: data.conversation_id,
           narrative: result.narrative,
           html: result.html,
           kpis: result.kpis,
@@ -312,12 +316,27 @@ async function pollChatJob(jobId, maxWaitMs = 300000) {
   throw new Error(`Job polling timed out after ${maxWaitMs / 1000} seconds`);
 }
 
-async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "") {
+async function callRouterAPI(queryText, sessionId, history = [], bearerToken = "", activeConversationId = null, setActiveConversationId = () => { }) {
   try {
-    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken);
-    console.log(`Job submitted: ${submitResp.job_id}`);
+    const submitResp = await submitChatJob(queryText, sessionId, history, bearerToken, activeConversationId);
+    console.log(`[Router] Job submitted: ${submitResp.job_id}`);
+
+    // FIX: capture Oracle's conversationId from the QUEUED response immediately.
+    // This is the earliest we get Oracle's real UUID — store it now so the next
+    // request sends it back even if the user types before polling finishes.
+    if (submitResp.conversation_id && submitResp.conversation_id !== activeConversationId) {
+      console.log(`[Router] conversationId set (QUEUED): ${submitResp.conversation_id}`);
+      setActiveConversationId(submitResp.conversation_id);
+      activeConversationId = submitResp.conversation_id;
+    }
 
     const result = await pollChatJob(submitResp.job_id);
+
+    // Also update from COMPLETE response (handles edge case where QUEUED had no ID)
+    if (result.conversationId && result.conversationId !== activeConversationId) {
+      console.log(`[Router] conversationId updated (COMPLETE): ${result.conversationId}`);
+      setActiveConversationId(result.conversationId);
+    }
     return result;
 
   } catch (err) {
@@ -1015,6 +1034,7 @@ export default function OracleAgentHub() {
   const [lastAgent, setLastAgent] = useState(null);
   const [lastConf, setLastConf] = useState(0);
   const [activeAgentId, setActiveAgentId] = useState(null);
+  const [activeConversationId, setActiveConversationId] = useState(null);
   const [sessionId] = useState(() => "sess_" + uuid());
   const [confList, setConfList] = useState([]);
   const [bearerToken, setBearerToken] = useState(localStorage.getItem("bearerToken") || "");
@@ -1092,6 +1112,7 @@ export default function OracleAgentHub() {
   const handleSignOut = () => {
     setAuthUser(null);
     setAuthToken("");
+    setActiveConversationId(null);   // FIX: clear Oracle conversationId on sign-out
     localStorage.removeItem("authUser");
     localStorage.removeItem("authToken");
   };
@@ -1126,7 +1147,7 @@ export default function OracleAgentHub() {
     setRouterStage(2);
 
     // Pass the last 8 messages for better context
-    const result = await callRouterAPI(queryText, sessionId, messages.slice(-8), bearerToken);
+    const result = await callRouterAPI(queryText, sessionId, messages.slice(-8), bearerToken, activeConversationId, setActiveConversationId);
 
     setRouterStage(3);
     await new Promise(r => setTimeout(r, 250));
@@ -1136,7 +1157,17 @@ export default function OracleAgentHub() {
       setLastIntent(result.intent);
       setLastAgent(result.agentName);
       setLastConf(result.confidence);
-      setActiveAgentId(result.agentId);
+
+      // FIX: detect agent switch — if the agent changed, clear the old Oracle
+      // conversationId immediately so the next request starts a fresh conversation.
+      setActiveAgentId(prev => {
+        if (prev && prev !== result.agentId) {
+          console.log(`[Agent switch] ${prev} → ${result.agentId} — clearing conversationId`);
+          setActiveConversationId(null);
+        }
+        return result.agentId;
+      });
+
       setConfList(prev => [...prev, result.confidence]);
 
       // Prevent duplicate messages
@@ -1155,16 +1186,17 @@ export default function OracleAgentHub() {
           agentName: result.agentName,
           intent: result.intent,
           confidence: result.confidence,
-          narrative: result.narrative,
+          narrative: result.narrative,          // stored as "narrative" (backend checks this)
           html: result.html,
           kpis: result.kpis,
           columns: result.columns,
           rows: result.rows,
           charts: result.charts,
           followUps: result.followUps,
+          conversationId: result.conversationId, // FIX: stored per-message so history carries it
         };
 
-        console.log(`[HandleQuery] Adding message for agent: ${result.agentId}`);
+        console.log(`[HandleQuery] Adding message: agent=${result.agentId} | convo=${result.conversationId}`);
         return [...prev, newMsg];
       });
     } else {

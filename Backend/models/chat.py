@@ -4,6 +4,7 @@ Request / Response schemas for the chat endpoint.
 
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 
 # ─── Request ────────────────────────────────────────────────────────────────────
@@ -14,6 +15,8 @@ class ChatRequest(BaseModel):
     history: list[dict] | None = None
     bearer_token: str | None = None
     job_id: str | None = None
+    force_agent_id: str | None = None
+    conversation_id: str | None = None  # Oracle's conversation ID for multi-turn agent conversations
 
 
 # ─── Response sub-models ────────────────────────────────────────────────────────
@@ -53,6 +56,7 @@ class ChatResponse(BaseModel):
     follow_ups: list[str] | None = None
     fallback: bool = False
     message: str | None = None
+    conversation_id: str | None = None  # Oracle's conversation ID to maintain state
 
 
 # ─── Async Job Responses ────────────────────────────────────────────────────────
@@ -62,6 +66,7 @@ class JobResponse(BaseModel):
     job_id: str
     status: str  # "QUEUED"
     message: str | None = None
+    conversation_id: str | None = None  # Return conversation_id for client to store
 
 
 class JobStatusResponse(BaseModel):
@@ -71,6 +76,7 @@ class JobStatusResponse(BaseModel):
     message: str | None = None
     result: ChatResponse | None = None  # Only present when status == "COMPLETE"
     error: str | None = None  # Only present when status == "ERROR"
+    conversation_id: str | None = None  # Return conversation_id for ongoing conversations
 
 
 class JobResultResponse(BaseModel):
@@ -78,3 +84,23 @@ class JobResultResponse(BaseModel):
     job_id: str
     status: str  # "COMPLETE"
     result: ChatResponse
+    conversation_id: str | None = None
+
+
+# ─── Additional Models for Workflow Management ─────────────────────────────────
+
+class WorkflowStatusResponse(BaseModel):
+    """Response for checking workflow status"""
+    session_id: str
+    active_agent: str | None = None
+    conversation_id: str | None = None
+    is_active: bool
+    message_count: int | None = None
+    expires_in_seconds: int | None = None
+
+
+class EndWorkflowResponse(BaseModel):
+    """Response for ending a workflow"""
+    success: bool
+    message: str
+    session_id: str

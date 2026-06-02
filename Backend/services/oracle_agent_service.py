@@ -33,7 +33,8 @@ async def invoke_oracle_agent(
     job_id: str = None, 
     version: int = None, 
     session_id: str = None,
-    agent_code: str = None  # Add agent_code for workflow tracking
+    agent_code: str = None,
+    conversation_id: str = None,   # Oracle UUID from previous turn (NOT session_id)
 ) -> ChatResponse:
     """
     Call Oracle Fusion AI Agent Studio using the invokeAsync + poll pattern.
@@ -99,6 +100,9 @@ async def invoke_oracle_agent(
             }
             logger.info(f"[{job_id}] Using Basic Auth header (user: {settings.FUSION_USER})")
 
+    # CRITICAL FIX: Never send session_id as conversationId.
+    # First turn  -> omit conversationId so Oracle creates a fresh conversation.
+    # Subsequent  -> send Oracle's own UUID returned on the first turn.
     invoke_payload = {
         "message": query,
         "conversational": True,
@@ -106,9 +110,13 @@ async def invoke_oracle_agent(
         "version": agent_version,
         "status": "PUBLISHED",
         "parameters": {},
-        "conversationId": session_id,
-        "useInternalConfig": True,  # Use Agent Studio's pre-configured REST credentials
+        "useInternalConfig": True,
     }
+    if conversation_id:
+        invoke_payload["conversationId"] = conversation_id
+        logger.info(f"[{job_id}] Resuming Oracle conversation: {conversation_id}")
+    else:
+        logger.info(f"[{job_id}] No conversationId set — Oracle will start a fresh conversation")
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         # ── Step 1: Invoke ──────────────────────────────────────────────
@@ -192,6 +200,7 @@ async def invoke_oracle_agent(
         logger.info(f"[{job_id}] Oracle job started: {oracle_job_id} (conversation: {conversation_id})")
 
         # ── Step 2: Store job state and start background polling ───────
+        oracle_conversation_id = invoke_data.get("conversationId")
         _job_state[job_id] = {
             "oracle_job_id": oracle_job_id,
             "headers": headers,
@@ -200,7 +209,8 @@ async def invoke_oracle_agent(
             "confidence": confidence,
             "agent_id": agent_id,
             "session_id": session_id,
-            "agent_code": agent_code or agent_id,  # Store agent code for workflow cleanup
+            "agent_code": agent_code or agent_id,
+            "oracle_conversation_id": oracle_conversation_id,
         }
         
         # Update job status to RUNNING
@@ -218,14 +228,16 @@ async def invoke_oracle_agent(
                 agent_id=agent_id,
                 session_id=session_id,
                 agent_code=agent_code or agent_id,
+                oracle_conversation_id=oracle_conversation_id,
             )
         )
-        
+
         logger.info(f"[{job_id}] Background polling started for Oracle job {oracle_job_id}")
-        
+
         return ChatResponse(
             success=True,
             message=f"Job queued. Oracle job ID: {oracle_job_id}",
+            conversation_id=oracle_conversation_id,
         )
 
 
@@ -241,6 +253,7 @@ async def _poll_oracle_async(
     agent_id: str,
     session_id: str = None,
     agent_code: str = None,
+    oracle_conversation_id: str = None,
 ) -> None:
     """Background task: Poll Oracle Fusion for job completion."""
     
@@ -292,15 +305,18 @@ async def _poll_oracle_async(
                     confidence=confidence,
                     agent_id=agent_id,
                 )
-                
+
+                # Attach Oracle's conversationId so frontend gets it at poll time
+                result.conversation_id = oracle_conversation_id
+
                 # Update job_manager with result
                 job_manager.update_job(
                     api_job_id,
                     status="COMPLETE",
                     result=result.dict() if hasattr(result, 'dict') else result,
                 )
-                
-                logger.info(f"[{api_job_id}] Oracle job {oracle_job_id} completed successfully")
+
+                logger.info(f"[{api_job_id}] Oracle job {oracle_job_id} completed | conversationId={oracle_conversation_id}")
                 
                 # NEW: End workflow if this was a subscription creation or other workflow agent
                 if session_id and agent_code:
@@ -444,6 +460,18 @@ async def _end_workflow_on_error(session_id: str, agent_code: str, error: str) -
 def get_job_state(job_id: str) -> dict:
     """Get the stored state for a job"""
     return _job_state.get(job_id)
+
+
+def get_conversation_id(job_id: str) -> str | None:
+    """
+    Return Oracle's conversationId for a job.
+    Called by the chat router poll endpoint.
+    This did not exist before — the import was failing silently.
+    """
+    state = _job_state.get(job_id)
+    if state:
+        return state.get("oracle_conversation_id")
+    return None
 
 
 def clear_completed_jobs():
